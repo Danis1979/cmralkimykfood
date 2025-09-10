@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <title>CMR Ops</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu; margin:20px; color:#222}
+    h1{margin:0 0 16px}
+    .row{display:flex; gap:16px; flex-wrap:wrap; margin-bottom:12px}
+    .card{border:1px solid #e5e7eb; border-radius:12px; padding:14px; background:#fff; max-width:760px}
+    label{font-size:12px; color:#555; display:block; margin-bottom:6px}
+    input,button{padding:8px; border-radius:8px; border:1px solid #d1d5db}
+    button{cursor:pointer}
+    pre{background:#f9fafb; border:1px solid #eee; border-radius:8px; padding:10px; overflow:auto}
+    .muted{color:#666; font-size:12px}
+    .actions{display:flex; gap:8px; align-items:end}
+  </style>
+</head>
+<body>
+  <h1>CMR Ops</h1>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>Base URL</label>
+        <input id="baseUrl" placeholder="http://localhost:3000" style="width:260px">
+      </div>
+      <div>
+        <label>API Key</label>
+        <input id="apiKey" placeholder="x-api-key" style="width:220px">
+      </div>
+      <div class="actions">
+        <button id="btnPing">Probar /health</button>
+        <span id="pingOut" class="muted"></span>
+      </div>
+    </div>
+    <div class="muted">Se guardan en localStorage.</div>
+  </div>
+
+  <div class="card">
+    <h3>Inventario</h3>
+    <div class="row">
+      <div class="actions">
+        <button id="btnRelease">Liberar reservas vencidas</button>
+      </div>
+    </div>
+    <pre id="out">{}</pre>
+  </div>
+
+  <script>
+    const K_API="cmr_api_key", K_BASE="cmr_base_url";
+    function el(id){ return document.getElementById(id); }
+    function base(){ return (el('baseUrl').value || 'http://localhost:3000').replace(/\/+$/,''); }
+    function headers(){
+      const h={'Content-Type':'application/json'};
+      const key=(el('apiKey').value||'').trim();
+      if(key) h['x-api-key']=key;
+      return h;
+    }
+    async function get(path){
+      const res = await fetch(base()+path,{headers:headers()});
+      if(!res.ok){ throw new Error(res.status+' '+res.statusText+': '+(await res.text())); }
+      return res.json();
+    }
+    async function post(path, body){
+      const res = await fetch(base()+path,{method:'POST', headers:headers(), body: body?JSON.stringify(body):undefined});
+      if(!res.ok){ throw new Error(res.status+' '+res.statusText+': '+(await res.text())); }
+      return res.json();
+    }
+    function show(obj){ el('out').textContent = JSON.stringify(obj, null, 2); }
+
+    document.addEventListener('DOMContentLoaded', ()=>{
+      el('apiKey').value = localStorage.getItem(K_API)||'';
+      el('baseUrl').value = localStorage.getItem(K_BASE)||'http://localhost:3000';
+      el('apiKey').addEventListener('input', ()=>localStorage.setItem(K_API, el('apiKey').value));
+      el('baseUrl').addEventListener('input', ()=>localStorage.setItem(K_BASE, el('baseUrl').value));
+    });
+
+    el('btnPing').onclick = async ()=>{
+      el('pingOut').textContent = '...';
+      try { const j = await get('/health'); el('pingOut').textContent='OK '+j.time; }
+      catch(e){ el('pingOut').textContent='ERROR '+e.message; }
+    };
+
+    el('btnRelease').onclick = async ()=>{
+      show({running:true});
+      try {
+        const j = await post('/inventory/release-expired');
+        show(j);
+      } catch(e){
+        show({error:String(e)});
+      }
+    };
+  </script>
+<section class="card" id="prodHistory" style="margin-top:16px">
+  <h2 style="margin:0 0 8px 0">Historial de Producción</h2>
+  <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center">
+    <label>take <input id="ph_take" type="number" value="20" min="1" max="100" style="width:80px"></label>
+    <label>skip <input id="ph_skip" type="number" value="0" min="0" style="width:80px"></label>
+    <label>batchId <input id="ph_batch" placeholder="(opcional)" style="width:260px"></label>
+    <button id="ph_btn">Cargar</button>
+  </div>
+  <div id="ph_warn" style="color:#a66;margin-top:6px;display:none"></div>
+  <div style="overflow:auto; max-height:360px; border:1px solid #ddd; margin-top:8px">
+    <table id="ph_tbl" style="width:100%; border-collapse:collapse">
+      <thead>
+        <tr style="background:#f8f8f8">
+          <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd">Fecha</th>
+          <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd">Batch</th>
+          <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd">Dir</th>
+          <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd">SKU</th>
+          <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd">Nombre</th>
+          <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd">Qty</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<script id="prodHistoryScript">
+  function el(id){ return document.getElementById(id); }
+  function base(){ return (document.getElementById("baseUrl")?.value || "http://localhost:3000").replace(/\/$/, ""); }
+  function key(){ return document.getElementById("apiKey")?.value || ""; }
+  async function fetchJson(path){
+    const headers = {};
+    const k = key(); if (k) headers["x-api-key"] = k;
+    const res = await fetch(base()+path, { headers });
+    if (!res.ok) { const t = await res.text().catch(()=> ""); throw new Error(`HTTP ${res.status} ${res.statusText} :: ${t}`); }
+    const ct = res.headers.get("content-type")||"";
+    return ct.includes("application/json") ? res.json() : res.text();
+  }
+  function fmtDate(s){ try{ return new Date(s).toLocaleString(); }catch(_){ return s || ""; } }
+  function renderRows(rows){
+    const tb = el("ph_tbl").querySelector("tbody");
+    tb.innerHTML = rows.map(r => `<tr>` +
+      `<td style="padding:6px;border-bottom:1px solid #eee">${fmtDate(r.date)}</td>` +
+      `<td style="padding:6px;border-bottom:1px solid #eee"><a href="#" data-batch="${r.batchId||""}" class="ph_batch_link">${r.batchId||"-"}</a></td>` +
+      `<td style="padding:6px;border-bottom:1px solid #eee">${r.direction}</td>` +
+      `<td style="padding:6px;border-bottom:1px solid #eee">${r.sku||""}</td>` +
+      `<td style="padding:6px;border-bottom:1px solid #eee">${r.name||""}</td>` +
+      `<td style="padding:6px;border-bottom:1px solid #eee; text-align:right">${r.qty}</td>` +
+    `</tr>`).join("");
+    for (const a of tb.querySelectorAll("a.ph_batch_link")){
+      a.addEventListener("click", (ev)=>{
+        ev.preventDefault();
+        const b = ev.currentTarget.getAttribute("data-batch");
+        if(b){ el("ph_batch").value = b; loadProductions(); }
+      });
+    }
+  }
+  async function loadProductions(){
+    try{
+      el("ph_warn").style.display = "none";
+      const take = Math.max(1, Math.min(100, Number(el("ph_take").value||20)));
+      const skip = Math.max(0, Number(el("ph_skip").value||0));
+      const data = await fetchJson(`/ops/productions?take=${take}&skip=${skip}`);
+      const batch = (el("ph_batch").value||"").trim();
+      let items = data.items||[];
+      if (batch) items = items.filter(x => (x.batchId||"") === batch);
+      renderRows(items);
+    }catch(e){
+      el("ph_warn").textContent = e.message||String(e);
+      el("ph_warn").style.display = "block";
+    }
+  }
+  document.addEventListener("DOMContentLoaded", ()=>{
+    const btn = el("ph_btn"); if(btn) btn.addEventListener("click", loadProductions);
+    loadProductions(); // autoload
+  });
+</script>
+<section class="card" id="suggestProd" style="margin-top:16px">
+  <h2 style="margin:0 0 8px 0">Sugerir producción (desde pedidos CONFIRMADOS)</h2>
+  <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap">
+    <label>Incluir solo PT (sku PT-)
+      <input id="sp_only_pt" type="checkbox" checked style="margin-left:6px">
+    </label>
+    <button id="sp_load">Calcular</button>
+    <button id="sp_make_all" style="background:#004085;color:#fff;border:none;padding:6px 10px;border-radius:4px">Producir todo</button>
+  </div>
+  <div id="sp_warn" style="color:#a66;display:none;margin-top:6px"></div>
+  <div style="overflow:auto; max-height:360px; border:1px solid #ddd; margin-top:8px">
+    <table id="sp_tbl" style="width:100%; border-collapse:collapse">
+      <thead>
+        <tr style="background:#f8f8f8">
+          <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd">SKU</th>
+          <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd">Nombre</th>
+          <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd">Pedido</th>
+          <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd">Disponible</th>
+          <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd">A producir</th>
+          <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd">Acción</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<script id="suggestProdScript">
+(function(){
+  function el(id){ return document.getElementById(id); }
+  function base(){ return (document.getElementById("baseUrl")?.value || "http://localhost:3000").replace(/\/$/, ""); }
+  function key(){ return document.getElementById("apiKey")?.value || ""; }
+  async function fetchJson(path, opts){
+    const headers = opts?.headers || {};
+    const k = key(); if (k) headers["x-api-key"] = k;
+    const res = await fetch(base()+path, { ...opts, headers });
+    if (!res.ok) { const t = await res.text().catch(()=> ""); throw new Error(`HTTP ${res.status} ${res.statusText} :: ${t}`); }
+    const ct = res.headers.get("content-type")||"";
+    return ct.includes("application/json") ? res.json() : res.text();
+  }
+  function showWarn(msg){ const w=el("sp_warn"); w.textContent = msg; w.style.display="block"; }
+  function hideWarn(){ el("sp_warn").style.display="none"; }
+
+  // Render
+  function render(rows){
+    const tb = el("sp_tbl").querySelector("tbody");
+    tb.innerHTML = rows.map(r => {
+      const disabled = r.toProduce <= 0 ? 'disabled' : '';
+      return `<tr>
+        <td style="padding:6px;border-bottom:1px solid #eee">${r.sku}</td>
+        <td style="padding:6px;border-bottom:1px solid #eee">${r.name||""}</td>
+        <td style="padding:6px;border-bottom:1px solid #eee; text-align:right">${r.ordered}</td>
+        <td style="padding:6px;border-bottom:1px solid #eee; text-align:right">${r.available}</td>
+        <td style="padding:6px;border-bottom:1px solid #eee; text-align:right">${r.toProduce}</td>
+        <td style="padding:6px;border-bottom:1px solid #eee">
+          <button class="sp_make_one" data-sku="${r.sku}" data-qty="${r.toProduce}" ${disabled}>Producir</button>
+          <button class="sp_make_one" data-sku="${r.sku}" data-qty="1" ${disabled}>+1</button>
+        </td>
+      </tr>`;
+    }).join("");
+
+    // Listeners
+    for (const btn of tb.querySelectorAll("button.sp_make_one")){
+      btn.addEventListener("click", async (ev)=>{
+        try{
+          const sku = ev.currentTarget.getAttribute("data-sku");
+          const qty = Number(ev.currentTarget.getAttribute("data-qty")||0);
+          if (!sku || !qty) return;
+          await produce(sku, qty);
+          await load(); // refrescar números
+        }catch(e){ showWarn(e.message||String(e)); }
+      });
+    }
+  }
+
+  async function produce(sku, qty){
+    const body = { sku, qty };
+    await fetchJson("/ops/produce", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+  }
+
+  async function load(){
+    try{
+      hideWarn();
+      const onlyPT = !!el("sp_only_pt").checked;
+
+      // 1) Leer pedidos CONFIRMADOS (usa /orders-search)
+      const ord = await fetchJson("/orders-search?status=CONFIRMADO");
+      const items = Array.isArray(ord?.items) ? ord.items : [];
+
+      // 2) Agrupar cantidad pedida por SKU (solo PT si aplica)
+      const demand = new Map(); // sku -> { sku, name, ordered }
+      for (const o of items){
+        const its = Array.isArray(o.items) ? o.items : [];
+        for (const it of its){
+          const sku = it.sku;
+          if (!sku) continue;
+          if (onlyPT && !sku.startsWith("PT-")) continue;
+          const key = sku;
+          const prev = demand.get(key) || { sku, name: it.name || "", ordered: 0 };
+          prev.ordered += Number(it.qty||0);
+          demand.set(key, prev);
+        }
+      }
+      const demandArr = Array.from(demand.values());
+      if (demandArr.length === 0){
+        render([]);
+        showWarn("No hay demanda en CONFIRMADO (o no hay PT-).");
+        return;
+      }
+
+      // 3) Traer stock disponible por SKU (paralelo)
+      const stocks = await Promise.all(demandArr.map(d =>
+        fetchJson(`/inventory/stock?sku=${encodeURIComponent(d.sku)}`)
+          .then(res => ({ sku: d.sku, available: Number(res?.items?.[0]?.available||0) }))
+          .catch(()=> ({ sku: d.sku, available: 0 }))
+      ));
+      const mapAvail = new Map(stocks.map(s => [s.sku, s.available]));
+
+      // 4) Calcular a producir
+      const rows = demandArr.map(d => {
+        const available = mapAvail.get(d.sku) ?? 0;
+        const toProduce = Math.max(0, d.ordered - available);
+        return { ...d, available, toProduce };
+      }).sort((a,b)=> b.toProduce - a.toProduce);
+
+      render(rows);
+
+      // Botón "Producir todo"
+      el("sp_make_all")?.addEventListener("click", async ()=>{
+        try{
+          const todos = rows.filter(r=> r.toProduce>0);
+          for (const r of todos){
+            await produce(r.sku, r.toProduce);
+          }
+          await load();
+        }catch(e){ showWarn(e.message||String(e)); }
+      }, { once:true });
+
+    }catch(e){
+      showWarn(e.message||String(e));
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", ()=>{
+    el("sp_load")?.addEventListener("click", load);
+    // auto-cargar al abrir
+    load();
+  });
+})();
+</script>
+<section class="card" id="releaseExpired" style="margin-top:16px">
+  <h2 style="margin:0 0 8px 0">Reservas vencidas</h2>
+  <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap">
+    <button id="relx_btn" style="background:#7a2e2e;color:#fff;border:none;padding:6px 10px;border-radius:4px">
+      Liberar reservas vencidas
+    </button>
+    <span id="relx_status" style="margin-left:8px;color:#444"></span>
+  </div>
+  <div id="relx_warn" style="color:#a66;display:none;margin-top:6px"></div>
+  <pre id="relx_result" style="margin-top:8px;max-height:280px;overflow:auto;background:#f8f8f8;padding:8px;border:1px solid #ddd"></pre>
+</section>
+
+<script id="releaseExpiredScript">
+(function(){
+  function el(id){ return document.getElementById(id); }
+  function base(){ return (document.getElementById("baseUrl")?.value || "http://localhost:3000").replace(/\/$/, ""); }
+  function key(){ return document.getElementById("apiKey")?.value || ""; }
+  async function callRelease(){
+    const headers = { "Content-Type":"application/json" };
+    const k = key(); if (k) headers["x-api-key"] = k;
+    const res = await fetch(base()+"/inventory/release-expired", { method:"POST", headers });
+    if (!res.ok){ const t = await res.text().catch(()=> ""); throw new Error(`HTTP ${res.status} ${res.statusText} :: ${t}`); }
+    return res.json();
+  }
+  function showWarn(msg){ const w=el("relx_warn"); w.textContent = msg; w.style.display="block"; }
+  function hideWarn(){ el("relx_warn").style.display="none"; }
+
+  document.addEventListener("DOMContentLoaded", ()=>{
+    const btn = el("relx_btn");
+    btn?.addEventListener("click", async ()=>{
+      hideWarn();
+      el("relx_status").textContent = "Procesando…";
+      el("relx_result").textContent = "";
+      try{
+        const data = await callRelease();
+        el("relx_result").textContent = JSON.stringify(data, null, 2);
+        el("relx_status").textContent =
+          `Liberadas: ${data?.expiredReservations||0}  |  Cancelados: ${(data?.cancelledOrders||[]).length}`;
+      }catch(e){
+        showWarn(e.message||String(e));
+        el("relx_status").textContent = "Error";
+      }
+    });
+  });
+})();
+</script>
+</body>
+</html>
+
+  <div class="card" style="margin-top:16px">
+    <h3>Producción</h3>
+    <div class="row">
+      <div>
+        <label>SKU PT</label>
+        <input id="prodSku" placeholder="PT-CAPRESE-001" style="width:220px">
+      </div>
+      <div>
+        <label>Cantidad</label>
+        <input id="prodQty" type="number" min="1" value="1" style="width:120px">
+      </div>
+      <div class="actions">
+        <button id="btnProduce">Producir</button>
+      </div>
+    </div>
+    <pre id="prodOut">{}</pre>
+  </div>
+
+  <script>
+    (function(){
+      function el(id){ return document.getElementById(id); }
+      function base(){ return (el('baseUrl').value || 'http://localhost:3000').replace(/\/+$/,''); }
+      function headers(){
+        const h={'Content-Type':'application/json'};
+        const key=(el('apiKey').value||'').trim();
+        if(key) h['x-api-key']=key;
+        return h;
+      }
+      async function post(path, body){
+        const res = await fetch(base()+path,{method:'POST', headers:headers(), body: JSON.stringify(body||{})});
+        const txt = await res.text();
+        let j; try{ j = JSON.parse(txt); }catch{ j = { raw: txt }; }
+        if(!res.ok){ throw new Error(JSON.stringify(j)); }
+        return j;
+      }
+      function show(obj){ el('prodOut').textContent = JSON.stringify(obj, null, 2); }
+
+      document.addEventListener('DOMContentLoaded', ()=>{
+        const sku = el('prodSku'); const qty = el('prodQty');
+        if (!sku.value) sku.value = localStorage.getItem('cmr_last_pt') || 'PT-CAPRESE-001';
+        el('btnProduce').addEventListener('click', async ()=>{
+          show({running:true});
+          try {
+            localStorage.setItem('cmr_last_pt', sku.value);
+            const j = await post('/ops/produce', { sku: sku.value.trim(), qty: Number(qty.value||0) });
+            show(j);
+          } catch(e){
+            show({error:String(e.message||e)});
+          }
+        });
+      });
+    })();
+  </script>
+
+  <div class="card" style="margin-top:16px">
+    <h3>Producción</h3>
+    <div class="row">
+      <div>
+        <label>SKU PT</label>
+        <input id="prodSku" placeholder="PT-CAPRESE-001" style="width:220px">
+      </div>
+      <div>
+        <label>Cantidad</label>
+        <input id="prodQty" type="number" min="1" value="1" style="width:120px">
+      </div>
+      <div class="actions">
+        <button id="btnProduce">Producir</button>
+      </div>
+    </div>
+    <pre id="prodOut">{}</pre>
+  </div>
+
+  <script>
+    (function(){
+      function el(id){ return document.getElementById(id); }
+      function base(){ return (el('baseUrl').value || 'http://localhost:3000').replace(/\/+$/,''); }
+      function headers(){
+        const h={'Content-Type':'application/json'};
+        const key=(el('apiKey').value||'').trim();
+        if(key) h['x-api-key']=key;
+        return h;
+      }
+      async function post(path, body){
+        const res = await fetch(base()+path,{method:'POST', headers:headers(), body: JSON.stringify(body||{})});
+        const txt = await res.text();
+        let j; try{ j = JSON.parse(txt); }catch{ j = { raw: txt }; }
+        if(!res.ok){ throw new Error(JSON.stringify(j)); }
+        return j;
+      }
+      function show(obj){ el('prodOut').textContent = JSON.stringify(obj, null, 2); }
+
+      document.addEventListener('DOMContentLoaded', ()=>{
+        const sku = el('prodSku'); const qty = el('prodQty');
+        if (!sku.value) sku.value = localStorage.getItem('cmr_last_pt') || 'PT-CAPRESE-001';
+        el('btnProduce').addEventListener('click', async ()=>{
+          show({running:true});
+          try {
+            localStorage.setItem('cmr_last_pt', sku.value);
+            const j = await post('/ops/produce', { sku: sku.value.trim(), qty: Number(qty.value||0) });
+            show(j);
+          } catch(e){
+            show({error:String(e.message||e)});
+          }
+        });
+      });
+    })();
+  </script>

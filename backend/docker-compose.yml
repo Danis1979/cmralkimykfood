@@ -1,0 +1,17 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: cmr-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: cmr
+    ports:
+      - "5432:5432"
+    volumes:
+      - cmr_pgdata:/var/lib/postgresql/data
+
+volumes:
+  cmr_pgdata:
+    driver: local

@@ -1,0 +1,107 @@
+<!-- ===================== VENTAS VS COMPRAS ===================== -->
+<section class="card" style="margin-top:24px;">
+  <h2 style="margin:0 0 12px 0;">Ventas vs Compras</h2>
+
+  <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+    <label>Desde (YYYY-MM):
+      <input type="month" id="svp_from">
+    </label>
+    <label>Hasta (YYYY-MM):
+      <input type="month" id="svp_to">
+    </label>
+    <button id="svp_load">Cargar</button>
+    <small id="svp_info" style="opacity:.7"></small>
+  </div>
+
+  <div style="margin-top:16px;">
+    <h3 style="margin:0 0 6px 0;">Totales</h3>
+    <table id="svp_totals" border="1" cellpadding="6">
+      <thead>
+        <tr><th>Ventas</th><th>Compras</th><th>Neto</th></tr>
+      </thead>
+      <tbody><tr><td colspan="3" style="text-align:center;opacity:.7">—</td></tr></tbody>
+    </table>
+  </div>
+
+  <div style="margin-top:16px;">
+    <h3 style="margin:0 0 6px 0;">Por mes</h3>
+    <table id="svp_rows" border="1" cellpadding="6">
+      <thead>
+        <tr><th>Mes</th><th>Ventas</th><th>Compras</th><th>Neto</th></tr>
+      </thead>
+      <tbody><tr><td colspan="4" style="text-align:center;opacity:.7">—</td></tr></tbody>
+    </table>
+  </div>
+
+  <div id="svp_warn" style="display:none;color:#b00;margin-top:8px;"></div>
+</section>
+
+<script>
+(function(){
+  function el(id){ return document.getElementById(id); }
+  const K_API="cmr_api_key", K_BASE="cmr_base_url";
+  function apiKey(){ return localStorage.getItem(K_API) || (document.getElementById("apiKey")?.value || ""); }
+  function base(){ return (localStorage.getItem(K_BASE) || (document.getElementById("baseUrl")?.value || location.origin)).replace(/\/+$/,""); }
+  function fmt(n){ return new Intl.NumberFormat().format(n||0); }
+
+  async function apiFetch(path){
+    const headers = {};
+    const key = apiKey();
+    if (key) headers["x-api-key"]=key;
+    const res = await fetch(base()+path, { headers });
+    if(!res.ok){ const t = await res.text().catch(()=> ""); throw new Error("HTTP "+res.status+" "+res.statusText+" :: "+t); }
+    return res.json();
+  }
+
+  function renderTotals(t){
+    const tb = el("svp_totals").querySelector("tbody");
+    tb.innerHTML = "<tr>"
+      + "<td>"+fmt(t.sales)+"</td>"
+      + "<td>"+fmt(t.purchases)+"</td>"
+      + "<td><b>"+fmt(t.net)+"</b></td>"
+      + "</tr>";
+  }
+
+  function renderRows(items){
+    const tb = el("svp_rows").querySelector("tbody");
+    if(!items || !items.length){
+      tb.innerHTML = '<tr><td colspan="4" style="text-align:center;opacity:.7">Sin datos</td></tr>';
+      return;
+    }
+    tb.innerHTML = items.map(r => "<tr>"
+      + "<td>"+r.month+"</td>"
+      + '<td style="text-align:right">'+fmt(r.sales)+"</td>"
+      + '<td style="text-align:right">'+fmt(r.purchases)+"</td>"
+      + '<td style="text-align:right"><b>'+fmt(r.net)+"</b></td>"
+      + "</tr>").join("");
+  }
+
+  async function loadSVP(){
+    el("svp_warn").style.display="none";
+    const f = el("svp_from")?.value, t = el("svp_to")?.value;
+    const qs = "?from="+encodeURIComponent(f)+"&to="+encodeURIComponent(t);
+    try{
+      const data = await apiFetch("/reports/sales-vs-purchases"+qs);
+      el("svp_info").textContent = "Rango: "+(data.range?.from||"")+" → "+(data.range?.to||"");
+      renderTotals(data.totals || {sales:0,purchases:0,net:0});
+      renderRows(data.items || []);
+    }catch(e){
+      el("svp_warn").textContent = (e && e.message) ? e.message : String(e);
+      el("svp_warn").style.display = "block";
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", function(){
+    // defaults a mes actual
+    const pad = n => String(n).padStart(2,"0");
+    const d = new Date(), mm = d.getUTCFullYear()+"-"+pad(d.getUTCMonth()+1);
+    const F = el("svp_from"), T = el("svp_to");
+    if(F && !F.value) F.value = mm;
+    if(T && !T.value) T.value = mm;
+
+    const btn = el("svp_load");
+    if (btn) btn.addEventListener("click", loadSVP);
+    loadSVP();
+  });
+})();
+</script>
