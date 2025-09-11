@@ -1,92 +1,68 @@
+import { Controller, Get, Header, Query, Res } from '@nestjs/common';
+import { Response } from 'express';
+import { PrismaService } from '../prisma.service';
 import { ApiTags } from '@nestjs/swagger';
 
-import { CacheInterceptor, CacheTTL } from "@nestjs/cache-manager";
-import { UseInterceptors } from "@nestjs/common";
-import { Controller, Get, Query, Res } from '@nestjs/common';
-import type { Response } from 'express';
-import { PrismaService } from '../prisma.service';
+function ym(d: Date) { return new Date(d.getUTCFullYear(), d.getUTCMonth(), 1).toISOString().slice(0,7); }
+function rangeFromTo(from?: string, to?: string) {
+  const start = from ? new Date(from + '-01T00:00:00Z') : new Date('1970-01-01T00:00:00Z');
+  const end = to ? new Date(new Date(to + '-01T00:00:00Z').getTime() + 31 * 24 * 3600 * 1000) : new Date();
+  return { start, end };
+}
 
-@Controller('reports')
 @ApiTags('Reports')
-
-@UseInterceptors(CacheInterceptor)
-@CacheTTL(30)
+@Controller('reports')
 export class ReportsSalesVsPurchasesCsvController {
   constructor(private prisma: PrismaService) {}
 
   @Get('sales-vs-purchases.csv')
-  async salesVsPurchasesCsv(
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-    @Res() res?: Response,
-  ) {
-    // Rango: por defecto año en curso
-    let start = new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1));
-    let end = new Date();
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  async csv(@Query('from') from: string, @Query('to') to: string, @Res() res: Response) {
+    res.setHeader('Content-Disposition', 'attachment; filename="sales-vs-purchases.csv"');
 
-    // Permitir YYYY-MM o fecha completa
-    const parseMonth = (s?: string) => {
-      if (!s) return null;
-      const d = new Date(s.length === 7 ? s + '-01' : s);
-      return isNaN(d.getTime()) ? null : d;
-    };
-    const mf = parseMonth(from);
-    const mt = parseMonth(to);
-    if (mf) start = new Date(Date.UTC(mf.getUTCFullYear(), mf.getUTCMonth(), 1));
-    if (mt) {
-      end = mt;
-      if (to && to.length === 7) {
-        end = new Date(Date.UTC(mt.getUTCFullYear(), mt.getUTCMonth() + 1, 1));
-      }
-    }
+    const { start, end } = rangeFromTo(from, to);
 
-    // Traer ventas (con items) y compras
-    const [sales, purchases] = await Promise.all([
-      this.prisma.sale.findMany({
-        where: { createdAt: { gte: start, lt: end } },
-        include: { items: true },
-      }),
-      this.prisma.purchase.findMany({
-        where: { createdAt: { gte: start, lt: end } },
-      }),
-    ]);
+    const sales = await this.prisma.sale.findMany({
+      where: { createdAt: { gte: start, lt: end } },
+      select: { createdAt: true, total: true },
+    });
 
-    const key = (d: Date) =>
-      `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    const purchasesRows = await this.prisma.purchase.findMany({
+      where: { paidAt: { gte: start, lt: end } },
+      select: { ingredient: true, qty: true },
+    });
 
-    type Row = { month: string; sales: number; purchases: number; net: number };
-    const map = new Map<string, Row>();
+    const prices = await this.prisma.ingredientPrice.findMany({
+      select: { ingredient: true, unitPrice: true, id: true },
+      orderBy: [{ ingredient: 'asc' }, { id: 'desc' }],
+    });
 
-    // Ventas: sum(item.price * qty)
+    const lastPrice = new Map<string, number>();
+    for (const p of prices) if (!lastPrice.has(p.ingredient)) lastPrice.set(p.ingredient, p.unitPrice);
+
+    const byMonth = new Map<string, { sales: number; purchases: number }>();
+
     for (const s of sales) {
-      const k = key(new Date(s.createdAt as any));
-      const amt =
-        (s.items || []).reduce((acc, it) => acc + Number(it.price || 0) * Number(it.qty || 0), 0);
-      const r = map.get(k) || { month: k, sales: 0, purchases: 0, net: 0 };
-      r.sales += amt;
-      r.net = r.sales - r.purchases;
-      map.set(k, r);
+      const k = ym(s.createdAt);
+      const row = byMonth.get(k) ?? { sales: 0, purchases: 0 };
+      row.sales += s.total ?? 0;
+      byMonth.set(k, row);
     }
 
-    // Compras: sum(purchase.total)
-    for (const p of purchases) {
-      const k = key(new Date(p.createdAt as any));
-      const amt = Number((p as any).total || 0);
-      const r = map.get(k) || { month: k, sales: 0, purchases: 0, net: 0 };
-      r.purchases += amt;
-      r.net = r.sales - r.purchases;
-      map.set(k, r);
+    for (const r of purchasesRows) {
+      const k = to ? to : (sales[0]?.createdAt ? ym(sales[0].createdAt) : from);
+      const row = byMonth.get(k) ?? { sales: 0, purchases: 0 };
+      const u = lastPrice.get(r.ingredient) ?? 0;
+      row.purchases += r.qty * u;
+      byMonth.set(k, row);
     }
 
-    const items = Array.from(map.values()).sort((a, b) => a.month.localeCompare(b.month));
+    const lines = ['Month,Sales,Purchases,Net'];
+    [...byMonth.entries()].sort(([a], [b]) => a.localeCompare(b)).forEach(([k, v]) => {
+      const net = v.sales - v.purchases;
+      lines.push(`${k},${v.sales.toFixed(2)},${v.purchases.toFixed(2)},${net.toFixed(2)}`);
+    });
 
-    const header = 'Month,Sales,Purchases,Net';
-    const lines = items.map(i => `${i.month},${fix(i.sales)},${fix(i.purchases)},${fix(i.net)}`);
-
-    res!.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res!.setHeader('Content-Disposition', 'attachment; filename="sales-vs-purchases.csv"');
-    res!.send([header, ...lines].join('\n'));
+    res.send(lines.join('\n'));
   }
 }
-
-function fix(n: number) { return Number.isFinite(n) ? n.toFixed(2) : '0.00'; }

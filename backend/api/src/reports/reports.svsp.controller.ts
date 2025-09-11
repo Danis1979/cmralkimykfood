@@ -1,105 +1,60 @@
+import { Controller, Get, Query } from '@nestjs/common';
+import { PrismaService } from '../prisma.service';
 import { ApiTags } from '@nestjs/swagger';
 
-import { CacheInterceptor, CacheTTL } from "@nestjs/cache-manager";
-import { UseInterceptors } from "@nestjs/common";
-import { Controller, Get, Headers, Query, UnauthorizedException } from '@nestjs/common';
-import { PrismaService } from '../prisma.service';
-
-function checkKey(k?: string) {
-  const expected = process.env.API_KEY || 'supersecreta-123';
-  if (expected && k !== expected) throw new UnauthorizedException();
-}
-
-function parseRange(from?: string, to?: string) {
-  const now = new Date();
-  const y = now.getFullYear();
-  const startDefault = new Date(Date.UTC(y, 0, 1, 0, 0, 0));
-  const endDefault = now;
-
-  const start = from
-    ? (from.match(/^\d{4}-\d{2}$/)
-        ? new Date(Date.UTC(Number(from.slice(0,4)), Number(from.slice(5,7))-1, 1, 0,0,0))
-        : new Date(from))
-    : startDefault;
-
-  const end = to
-    ? (to.match(/^\d{4}-\d{2}$/)
-        ? new Date(Date.UTC(Number(to.slice(0,4)), Number(to.slice(5,7))-1 + 1, 1, 0,0,0)) // mes siguiente
-        : new Date(to))
-    : endDefault;
-
+function rangeFromTo(from?: string, to?: string) {
+  const start = from ? new Date(from + '-01T00:00:00Z') : new Date('1970-01-01T00:00:00Z');
+  const end = to ? new Date(new Date(to + '-01T00:00:00Z').getTime() + 31 * 24 * 3600 * 1000) : new Date();
   return { start, end };
 }
 
-function monthKey(d: Date) {
-  const y = d.getUTCFullYear();
-  const m = (d.getUTCMonth()+1).toString().padStart(2,'0');
-  return `${y}-${m}`;
-}
-
-@Controller('reports')
 @ApiTags('Reports')
-
-@UseInterceptors(CacheInterceptor)
-@CacheTTL(30)
+@Controller('reports')
 export class ReportsSalesVsPurchasesController {
   constructor(private prisma: PrismaService) {}
 
   @Get('sales-vs-purchases')
-  async svsp(
-    @Query('from') from: string | undefined,
-    @Query('to') to: string | undefined,
-    @Headers('x-api-key') key?: string,
-  ) {
-    checkKey(key);
-    const { start, end } = parseRange(from, to);
+  async getSvp(@Query('from') from?: string, @Query('to') to?: string) {
+    const { start, end } = rangeFromTo(from, to);
 
-    const [sales, purchases] = await Promise.all([
-      this.prisma.sale.findMany({
-        where: {
-          createdAt: { gte: start, lt: end },
-          // si quisieras filtrar status: { in: ['EMITIDA','CERRADA'] as any }
-        },
-        select: { total: true, createdAt: true },
-        orderBy: { createdAt: 'asc' },
-      }),
-      this.prisma.purchase.findMany({
-        where: { createdAt: { gte: start, lt: end } },
-        select: { total: true, createdAt: true },
-        orderBy: { createdAt: 'asc' },
-      }),
-    ]);
+    // Ventas: tabla ventas -> modelo Sale (mapeado)
+    const sales = await this.prisma.sale.findMany({
+      where: { createdAt: { gte: start, lt: end } },
+      select: { createdAt: true, total: true },
+      orderBy: { createdAt: 'asc' },
+    });
 
-    const map = new Map<string, { month: string; sales: number; purchases: number; net: number }>();
+    // Compras: estimamos monto = qty * último precio conocido del ingrediente
+    const purchasesRows = await this.prisma.purchase.findMany({
+      where: { paidAt: { gte: start, lt: end } },
+      select: { ingredient: true, qty: true },
+    });
 
-    for (const s of sales) {
-      const k = monthKey(s.createdAt);
-      const row = map.get(k) || { month: k, sales: 0, purchases: 0, net: 0 };
-      row.sales += Number(s.total || 0);
-      map.set(k, row);
+    // Traemos precios por ingrediente (el último registro por ingrediente)
+    const prices = await this.prisma.ingredientPrice.findMany({
+      select: { ingredient: true, unitPrice: true, id: true },
+      orderBy: [{ ingredient: 'asc' }, { id: 'desc' }],
+    });
+
+    const lastPrice = new Map<string, number>();
+    for (const p of prices) {
+      if (!lastPrice.has(p.ingredient)) lastPrice.set(p.ingredient, p.unitPrice);
     }
-    for (const p of purchases) {
-      const k = monthKey(p.createdAt);
-      const row = map.get(k) || { month: k, sales: 0, purchases: 0, net: 0 };
-      row.purchases += Number(p.total || 0);
-      map.set(k, row);
-    }
-    const items = Array.from(map.values())
-      .map(r => ({ ...r, net: r.sales - r.purchases }))
-      .sort((a,b) => a.month.localeCompare(b.month));
 
-    const totals = items.reduce((acc, r) => {
-      acc.sales += r.sales;
-      acc.purchases += r.purchases;
-      acc.net += r.net;
-      return acc;
-    }, { sales: 0, purchases: 0, net: 0 });
+    const purchasesTotal = purchasesRows.reduce((acc, r) => {
+      const u = lastPrice.get(r.ingredient) ?? 0;
+      return acc + r.qty * u;
+    }, 0);
+
+    const salesTotal = sales.reduce((acc, s) => acc + (s.total ?? 0), 0);
 
     return {
-      range: { from: start.toISOString(), to: end.toISOString() },
-      totalMonths: items.length,
-      totals,
-      items,
+      range: { from: start, to: end },
+      totals: {
+        sales: Math.round(salesTotal * 100) / 100,
+        purchases: Math.round(purchasesTotal * 100) / 100,
+        net: Math.round((salesTotal - purchasesTotal) * 100) / 100,
+      },
     };
   }
 }

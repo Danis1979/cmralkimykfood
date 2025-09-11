@@ -119,5 +119,5 @@ CREATE TABLE "public"."ventas" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "usuarios_email_key" ON "public"."usuarios"("email");
+CREATE UNIQUE INDEX "usuarios_email_key" ON "public"."usuarios"("email" ASC);
 

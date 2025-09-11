@@ -83,7 +83,7 @@ model usuarios {
 }
 
 /**
- * Modelo que espera el código (mapea a la tabla existente "ventas")
+ * Modelo que usa el código: mapea a la tabla existente "ventas"
  */
 model Sale {
   id        Int      @id @default(autoincrement())
@@ -91,7 +91,7 @@ model Sale {
   docType   String   @map("tipo_comprobante") @db.VarChar(20)
   docNumber String   @map("numero") @db.VarChar(50)
   client    String   @map("cliente") @db.VarChar(100)
-  amount    Float    @map("importe_bruto")
+  total     Float    @map("importe_bruto")
 
   @@map("ventas")
 }
