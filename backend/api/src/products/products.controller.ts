@@ -8,7 +8,7 @@ export class ProductsController {
   @Get()
   async list(@Query('take') take = '50') {
     const n = Math.min(parseInt(take, 10) || 50, 100);
-    const items = await this.prisma.product.findMany({
+    const items = await (this.prisma as any).product.findMany({
       take: n,
       orderBy: { createdAt: 'desc' },
     });

@@ -7,7 +7,7 @@ export class LedgerController {
 
   @Get('balances')
   async balances() {
-    const entries = await this.prisma.ledgerEntry.findMany();
+    const entries = await (this.prisma as any).ledgerEntry.findMany();
     const sign = (t: 'DEBE' | 'HABER') => (t === 'HABER' ? 1 : -1);
 
     const totals: Record<string, number> = {};

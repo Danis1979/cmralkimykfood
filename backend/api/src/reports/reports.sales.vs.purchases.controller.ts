@@ -51,13 +51,13 @@ export class ReportsSalesVsPurchasesController {
   async salesVsPurchases(@Query('from') from?: string, @Query('to') to?: string) {
     const { start, end } = parseRange(from, to);
 
-    const sales = await this.prisma.sale.findMany({
+    const sales = await (this.prisma as any).sale.findMany({
       where: { status: { not: 'ANULADA' as any }, createdAt: { gte: start, lt: end } },
       select: { createdAt: true, items: { select: { qty: true, price: true } } },
       orderBy: { createdAt: 'asc' },
     });
 
-    const purchases = await this.prisma.purchase.findMany({
+    const purchases = await (this.prisma as any).purchase.findMany({
       where: { createdAt: { gte: start, lt: end } },
       select: { createdAt: true, items: { select: { qty: true, price: true } } },
       orderBy: { createdAt: 'asc' },

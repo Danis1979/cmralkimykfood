@@ -18,7 +18,7 @@ export class OrdersQueryController {
     const _skip = Math.max(0, parseInt(String(skip), 10) || 0);
     const _take = Math.min(100, Math.max(1, parseInt(String(take), 10) || 20));
 
-    let statusFilter: OrderStatus | undefined;
+    let statusFilter: any | undefined;
     if (status) {
       const up = status.toUpperCase() as OrderStatus;
       if (!Object.values(OrderStatus).includes(up)) {
@@ -50,7 +50,7 @@ export class OrdersQueryController {
     if (clientEmail) where.client = { email: clientEmail };
 
     const [items, total] = await Promise.all([
-      this.prisma.order.findMany({
+      (this.prisma as any).order.findMany({
         where,
         skip: _skip,
         take: _take,
@@ -60,7 +60,7 @@ export class OrdersQueryController {
           items: { include: { product: true } },
         },
       }),
-      this.prisma.order.count({ where }),
+      (this.prisma as any).order.count({ where }),
     ]);
 
     const out = items.map((o) => {

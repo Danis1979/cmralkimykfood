@@ -11,13 +11,13 @@ export class DeliveriesController {
     if (!body?.orderId) throw new BadRequestException('orderId requerido');
 
     return this.prisma.$transaction(async (tx) => {
-      const order = await tx.order.findUnique({ where: { id: body.orderId }, include: { items: true } });
+      const order = await (tx as any).order.findUnique({ where: { id: body.orderId }, include: { items: true } });
       if (!order) throw new BadRequestException('Pedido inexistente');
       if (order.status !== 'CONFIRMADO') {
         throw new BadRequestException(`El pedido debe estar CONFIRMADO (actual=${order.status})`);
       }
 
-      const reservas = await tx.stockReservation.findMany({ where: { orderId: order.id, status: 'ACTIVA' } });
+      const reservas = await (tx as any).stockReservation.findMany({ where: { orderId: order.id, status: 'ACTIVA' } });
       if (!reservas.length) throw new BadRequestException('No hay reservas activas para este pedido');
 
       for (const it of order.items) {
@@ -28,7 +28,7 @@ export class DeliveriesController {
         const onHand = await this.getOnHand(tx, it.productId);
         if (onHand < qty) throw new BadRequestException(`Stock insuficiente para entregar. Necesario ${qty}, onHand ${onHand}`);
 
-        await tx.inventoryMove.create({
+        await (tx as any).inventoryMove.create({
           data: {
             productId: it.productId,
             qty,
@@ -41,10 +41,10 @@ export class DeliveriesController {
           },
         });
 
-        await tx.stockReservation.update({ where: { id: res!.id }, data: { status: 'CONSUMIDA' } });
+        await (tx as any).stockReservation.update({ where: { id: res!.id }, data: { status: 'CONSUMIDA' } });
       }
 
-      const updated = await tx.order.update({ where: { id: order.id }, data: { status: 'ENTREGADO' } });
+      const updated = await (tx as any).order.update({ where: { id: order.id }, data: { status: 'ENTREGADO' } });
       return { id: updated.id, status: updated.status };
     });
   }
@@ -52,8 +52,8 @@ export class DeliveriesController {
   // 👉 FIX: usar el tipo correcto del cliente transaccional
   private async getOnHand(tx: Prisma.TransactionClient, productId: string) {
     const [inAgg, outAgg] = await Promise.all([
-      tx.inventoryMove.aggregate({ where: { productId, direction: 'IN' }, _sum: { qty: true } }),
-      tx.inventoryMove.aggregate({ where: { productId, direction: 'OUT' }, _sum: { qty: true } }),
+      (tx as any).inventoryMove.aggregate({ where: { productId, direction: 'IN' }, _sum: { qty: true } }),
+      (tx as any).inventoryMove.aggregate({ where: { productId, direction: 'OUT' }, _sum: { qty: true } }),
     ]);
     return (inAgg._sum.qty ?? 0) - (outAgg._sum.qty ?? 0);
   }

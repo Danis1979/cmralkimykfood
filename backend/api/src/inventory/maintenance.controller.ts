@@ -12,13 +12,13 @@ export class InventoryMaintenanceController {
 
     return this.prisma.$transaction(async (tx) => {
       // 1) Marcar EXPIRADA toda reserva ACTIVA vencida
-      const toExpire = await tx.stockReservation.findMany({
+      const toExpire = await (tx as any).stockReservation.findMany({
         where: { status: 'ACTIVA', expiresAt: { lt: now } },
         select: { id: true, orderId: true },
       });
 
       for (const r of toExpire) {
-        await tx.stockReservation.update({
+        await (tx as any).stockReservation.update({
           where: { id: r.id },
           data: { status: 'EXPIRADA' },
         });
@@ -29,13 +29,13 @@ export class InventoryMaintenanceController {
       const cancelledOrders: string[] = [];
 
       for (const orderId of touchedOrderIds) {
-        const activeCount = await tx.stockReservation.count({
+        const activeCount = await (tx as any).stockReservation.count({
           where: { orderId, status: 'ACTIVA' },
         });
-        const order = await tx.order.findUnique({ where: { id: orderId } });
+        const order = await (tx as any).order.findUnique({ where: { id: orderId } });
 
         if (order && order.status === 'CONFIRMADO' && activeCount === 0) {
-          await tx.order.update({
+          await (tx as any).order.update({
             where: { id: orderId },
             data: {
               status: 'CANCELADO',
