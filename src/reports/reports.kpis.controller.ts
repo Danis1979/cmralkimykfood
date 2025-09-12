@@ -2,17 +2,14 @@ import { ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CacheInterceptor, CacheTTL } from "@nestjs/cache-manager";
 import { UseInterceptors } from "@nestjs/common";
 import { Controller, Get, Query } from '@nestjs/common';
-
 import { PrismaService } from '../prisma.service';
 
 type Range = { start: Date; end: Date };
 
 function parseRange(from?: string, to?: string): Range {
   const now = new Date();
-  // por defecto: año en curso
   let start = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
   let end = new Date();
-
   const mm = (s?: string) => (s && /^\d{4}-\d{2}$/.test(s) ? s : null);
 
   if (from) {
@@ -29,8 +26,7 @@ function parseRange(from?: string, to?: string): Range {
     const m = mm(to);
     if (m) {
       const [y, mo] = m.split('-').map(Number);
-      // end exclusivo = primer día del mes siguiente
-      end = new Date(Date.UTC(y, mo, 1));
+      end = new Date(Date.UTC(y, mo, 1)); // exclusivo
     } else {
       const d = new Date(to);
       if (!isNaN(+d)) end = d;
@@ -46,6 +42,17 @@ function parseRange(from?: string, to?: string): Range {
 export class ReportsKpisController {
   constructor(private readonly prisma: PrismaService) {}
 
+  // (opcional) debug en prod
+  @Get('_debug_delegates')
+  getDelegates() {
+    const p: any = this.prisma;
+    const keys = Object.keys(p).filter(k => {
+      try { return p[k] && (p[k].aggregate || p[k].groupBy || p[k].findMany); }
+      catch { return false; }
+    }).sort();
+    return { delegates: keys };
+  }
+
   @Get('kpis')
   @ApiQuery({ name: 'from', required: false, description: 'YYYY-MM o ISO date' })
   @ApiQuery({ name: 'to', required: false, description: 'YYYY-MM o ISO date' })
@@ -53,28 +60,22 @@ export class ReportsKpisController {
     const { start, end } = parseRange(from, to);
     const p: any = this.prisma;
 
-    // Detectar delegates disponibles (nombres reales en Render)
-    const sale =
-      p.sale || p.Sale || p.ventas || p.Ventas;
-    const compras =
-      p.purchase || p.compras || p.Purchase || p.Compras;
-    const preciosIng =
-      p.precios_ingredientes || p.PreciosIngredientes || p.precios || p.preciosIng;
-    const receivable =
-      p.receivable || p.Receivable || p.cxc || p.cuentas_por_cobrar;
+    // Delegates dinámicos según existan en runtime
+    const sale = p.sale || p.Sale || p.ventas || p.Ventas;                  // Render: Model "Sale" => delegate "sale"
+    const compras = p.purchase || p.compras || p.Purchase || p.Compras;     // Render: "compras"
+    const preciosIng = p.precios_ingredientes || p.PreciosIngredientes;     // Render: "precios_ingredientes"
+    const receivable = p.receivable || p.Receivable || p.cxc;               // Puede NO existir en Render
 
     // --- Ventas ---
     let sales = 0;
     try {
       if (sale?.aggregate) {
-        // En el modelo Sale del Render, la fecha es "date"
-        const where = sale === p.Sale || sale === p.sale
-          ? { date: { gte: start, lt: end } }
+        const where = (sale === p.Sale || sale === p.sale)
+          ? { date: { gte: start, lt: end } }        // Render: "Sale.date"
           : { createdAt: { gte: start, lt: end } };
         const salesAgg = await sale.aggregate({ _sum: { total: true }, where });
         sales = Number(salesAgg?._sum?.total || 0);
       } else if (p.$queryRaw) {
-        // Fallback crudo por si no hay aggregate
         const rows: any = await p.$queryRaw`
           SELECT COALESCE(SUM(total),0) AS total
           FROM "Sale"
@@ -84,13 +85,13 @@ export class ReportsKpisController {
       }
     } catch { sales = 0; }
 
-    // --- Compras (sum(cantidad) * precio_unitario de precios_ingredientes) ---
+    // --- Compras: sum(cantidad) * precio_unitario (si existen tablas) ---
     let purchases = 0;
     try {
       if (compras?.groupBy && preciosIng?.findMany) {
         const groups = await compras.groupBy({
           by: ['ingrediente'],
-          where: { fecha_pago: { gte: start, lt: end } }, // campo real en Render
+          where: { fecha_pago: { gte: start, lt: end } },
           _sum: { cantidad: true },
         });
         const precios = await preciosIng.findMany();
@@ -102,32 +103,30 @@ export class ReportsKpisController {
           const pu = priceMap.get(g.ingrediente);
           if (pu) purchases += qty * pu;
         }
-      } else {
-        purchases = 0;
       }
     } catch { purchases = 0; }
 
-    // --- CxC pendientes (si no existe el modelo, 0) ---
+    // --- CxC pendientes (si no hay modelo, queda 0) ---
     let receivablesPending = 0;
     try {
       if (receivable?.aggregate) {
-        const receivablesAgg = await receivable.aggregate({
+        const agg = await receivable.aggregate({
           _sum: { balance: true },
           where: { status: { in: ['Pendiente', 'PENDING', 'pending'] } },
         });
-        receivablesPending = Number(receivablesAgg?._sum?.balance || 0);
+        receivablesPending = Number(agg?._sum?.balance || 0);
       }
     } catch { receivablesPending = 0; }
 
-    // --- Top client por ventas (en DB Render el campo es "client") ---
+    // --- Top client por ventas ---
     let topClient: any = null;
     try {
       if (sale?.groupBy) {
-        const where = sale === p.Sale || sale === p.sale
+        const where = (sale === p.Sale || sale === p.sale)
           ? { date: { gte: start, lt: end } }
           : { createdAt: { gte: start, lt: end } };
         const top = await sale.groupBy({
-          by: ['client'],
+          by: ['client'], // Render: campo "client" en Sale
           where,
           _sum: { total: true },
           _count: { _all: true },
