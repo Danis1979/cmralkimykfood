@@ -11,7 +11,7 @@ async function bootstrap() {
         /^https?:\/\/localhost:3001$/,
         /^https?:\/\/alkimyk-front\.onrender\.com$/,
       ];
-      if (!origin) return cb(null, true); // curl / mismo origen, etc.
+      if (!origin) return cb(null, true); // curl / mismo origen
       cb(allow.some(rx => rx.test(origin)) ? null : new Error('Not allowed by CORS'), true);
     },
     credentials: true,
