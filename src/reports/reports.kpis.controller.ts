@@ -42,7 +42,7 @@ function parseRange(from?: string, to?: string): Range {
 export class ReportsKpisController {
   constructor(private readonly prisma: PrismaService) {}
 
-  // (opcional) debug en prod
+  // Debug: ver delegates disponibles en runtime
   @Get('_debug_delegates')
   getDelegates() {
     const p: any = this.prisma;
@@ -60,18 +60,19 @@ export class ReportsKpisController {
     const { start, end } = parseRange(from, to);
     const p: any = this.prisma;
 
-    // Delegates dinámicos según existan en runtime
-    const sale = p.sale || p.Sale || p.ventas || p.Ventas;                  // Render: Model "Sale" => delegate "sale"
-    const compras = p.purchase || p.compras || p.Purchase || p.Compras;     // Render: "compras"
-    const preciosIng = p.precios_ingredientes || p.PreciosIngredientes;     // Render: "precios_ingredientes"
-    const receivable = p.receivable || p.Receivable || p.cxc;               // Puede NO existir en Render
+    // Delegates dinámicos según existan en runtime (Render)
+    const sale       = p.sale || p.Sale || p.ventas || p.Ventas;             // "Sale" -> delegate "sale"
+    const compras    = p.purchase || p.compras || p.Purchase || p.Compras;   // "compras" (si existe)
+    const preciosIng = p.precios_ingredientes || p.PreciosIngredientes;      // "precios_ingredientes" (si existe)
+    const receivable = p.receivable || p.Receivable || p.cxc;                // puede NO existir
 
     // --- Ventas ---
     let sales = 0;
     try {
       if (sale?.aggregate) {
+        // En Render "Sale" tiene campo "date"
         const where = (sale === p.Sale || sale === p.sale)
-          ? { date: { gte: start, lt: end } }        // Render: "Sale.date"
+          ? { date: { gte: start, lt: end } }
           : { createdAt: { gte: start, lt: end } };
         const salesAgg = await sale.aggregate({ _sum: { total: true }, where });
         sales = Number(salesAgg?._sum?.total || 0);
@@ -85,7 +86,7 @@ export class ReportsKpisController {
       }
     } catch { sales = 0; }
 
-    // --- Compras: sum(cantidad) * precio_unitario (si existen tablas) ---
+    // --- Compras (fallback por ingredientes * precio_unitario) ---
     let purchases = 0;
     try {
       if (compras?.groupBy && preciosIng?.findMany) {
@@ -106,7 +107,7 @@ export class ReportsKpisController {
       }
     } catch { purchases = 0; }
 
-    // --- CxC pendientes (si no hay modelo, queda 0) ---
+    // --- CxC pendientes (si no hay modelo, se queda 0) ---
     let receivablesPending = 0;
     try {
       if (receivable?.aggregate) {
@@ -118,7 +119,7 @@ export class ReportsKpisController {
       }
     } catch { receivablesPending = 0; }
 
-    // --- Top client por ventas ---
+    // --- Top client por ventas (Render: "Sale.client") ---
     let topClient: any = null;
     try {
       if (sale?.groupBy) {
@@ -126,7 +127,7 @@ export class ReportsKpisController {
           ? { date: { gte: start, lt: end } }
           : { createdAt: { gte: start, lt: end } };
         const top = await sale.groupBy({
-          by: ['client'], // Render: campo "client" en Sale
+          by: ['client'],
           where,
           _sum: { total: true },
           _count: { _all: true },
