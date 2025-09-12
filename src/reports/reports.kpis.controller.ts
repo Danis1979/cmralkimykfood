@@ -51,114 +51,102 @@ export class ReportsKpisController {
   @ApiQuery({ name: 'to', required: false, description: 'YYYY-MM o ISO date' })
   async getKpis(@Query('from') from?: string, @Query('to') to?: string) {
     const { start, end } = parseRange(from, to);
+    const p: any = this.prisma;
 
-    const p = this.prisma as any;
+    // Detectar delegates disponibles (nombres reales en Render)
+    const sale =
+      p.sale || p.Sale || p.ventas || p.Ventas;
+    const compras =
+      p.purchase || p.compras || p.Purchase || p.Compras;
+    const preciosIng =
+      p.precios_ingredientes || p.PreciosIngredientes || p.precios || p.preciosIng;
+    const receivable =
+      p.receivable || p.Receivable || p.cxc || p.cuentas_por_cobrar;
 
-    // Detectar delegates disponibles (evita reventar si falta alguno en Render)
-    const sale = p.sale ?? p.Sale ?? p.ventas ?? p.Ventas;
-    const purchase = p.purchase ?? p.Purchase ?? p.compras ?? p.Compras;
-    const receivable = p.receivable ?? p.Receivable ?? p.cxc ?? p.cuentas_por_cobrar;
-
-    // ---- Ventas ----
+    // --- Ventas ---
     let sales = 0;
     try {
       if (sale?.aggregate) {
-        const agg = await sale.aggregate({
-          _sum: { total: true },
-          where: { status: 'EMITIDA', createdAt: { gte: start, lt: end } },
-        });
-        sales = Number(agg._sum?.total ?? 0);
+        // En el modelo Sale del Render, la fecha es "date"
+        const where = sale === p.Sale || sale === p.sale
+          ? { date: { gte: start, lt: end } }
+          : { createdAt: { gte: start, lt: end } };
+        const salesAgg = await sale.aggregate({ _sum: { total: true }, where });
+        sales = Number(salesAgg?._sum?.total || 0);
+      } else if (p.$queryRaw) {
+        // Fallback crudo por si no hay aggregate
+        const rows: any = await p.$queryRaw`
+          SELECT COALESCE(SUM(total),0) AS total
+          FROM "Sale"
+          WHERE "date" >= ${start} AND "date" < ${end}
+        `;
+        sales = Number(rows?.[0]?.total || 0);
       }
-    } catch (e) {
-      console.warn('KPIs: sales.aggregate falló:', (e as any)?.message);
-    }
+    } catch { sales = 0; }
 
-    // ---- Compras ----
+    // --- Compras (sum(cantidad) * precio_unitario de precios_ingredientes) ---
     let purchases = 0;
     try {
-      if (purchase?.aggregate) {
-        const agg = await purchase.aggregate({
-          _sum: { total: true },
-          where: { createdAt: { gte: start, lt: end } },
+      if (compras?.groupBy && preciosIng?.findMany) {
+        const groups = await compras.groupBy({
+          by: ['ingrediente'],
+          where: { fecha_pago: { gte: start, lt: end } }, // campo real en Render
+          _sum: { cantidad: true },
         });
-        purchases = Number(agg._sum?.total ?? 0);
-      } else if (p.compras?.groupBy && p.precios_ingredientes?.findMany) {
-        // fallback: calcula compras por cantidad * precio_unitario
-        const precios = await p.precios_ingredientes.findMany();
+        const precios = await preciosIng.findMany();
         const priceMap = new Map(
           precios.map((r: any) => [r.ingrediente, Number(r.precio_unitario || 0)])
         );
-        const grupos = await p.compras.groupBy({
-          by: ['ingrediente'],
-          _sum: { cantidad: true },
-          where: { fecha_pago: { gte: start, lt: end } },
-        });
-        for (const g of grupos) {
-          const qty = Number(g._sum?.cantidad ?? 0);
-          const pu = priceMap.get(g.ingrediente) ?? 0;
-          purchases += qty * pu;
+        for (const g of groups) {
+          const qty = Number(g?._sum?.cantidad || 0);
+          const pu = priceMap.get(g.ingrediente);
+          if (pu) purchases += qty * pu;
         }
-        purchases = Number(purchases.toFixed(2));
+      } else {
+        purchases = 0;
       }
-    } catch (e) {
-      console.warn('KPIs: purchases fallback falló:', (e as any)?.message);
-    }
+    } catch { purchases = 0; }
 
-    // ---- CxC pendientes actuales ----
+    // --- CxC pendientes (si no existe el modelo, 0) ---
     let receivablesPending = 0;
     try {
       if (receivable?.aggregate) {
-        const agg = await receivable.aggregate({
+        const receivablesAgg = await receivable.aggregate({
           _sum: { balance: true },
-          where: { status: 'Pendiente' },
+          where: { status: { in: ['Pendiente', 'PENDING', 'pending'] } },
         });
-        receivablesPending = Number(agg._sum?.balance ?? 0);
+        receivablesPending = Number(receivablesAgg?._sum?.balance || 0);
       }
-    } catch (e) {
-      console.warn('KPIs: receivables.aggregate falló:', (e as any)?.message);
-    }
+    } catch { receivablesPending = 0; }
 
-    // ---- Top client del rango ----
+    // --- Top client por ventas (en DB Render el campo es "client") ---
     let topClient: any = null;
     try {
       if (sale?.groupBy) {
-        const topGroup = await sale.groupBy({
-          by: ['clientId'],
-          where: { status: 'EMITIDA', createdAt: { gte: start, lt: end } },
+        const where = sale === p.Sale || sale === p.sale
+          ? { date: { gte: start, lt: end } }
+          : { createdAt: { gte: start, lt: end } };
+        const top = await sale.groupBy({
+          by: ['client'],
+          where,
           _sum: { total: true },
           _count: { _all: true },
           orderBy: { _sum: { total: 'desc' } },
           take: 1,
         });
-        if (topGroup.length) {
-          const top = topGroup[0];
-          let clientName: string | null = null;
-          let email: string | null = null;
-          try {
-            const clientD =
-              p.client ?? p.Client ?? p.cliente ?? p.Cliente ?? p.clientes ?? p.Clientes;
-            if (clientD?.findUnique && top.clientId) {
-              const c = await clientD.findUnique({ where: { id: top.clientId } });
-              clientName = c?.name ?? c?.nombre ?? null;
-              email = c?.email ?? c?.correo ?? null;
-            }
-          } catch {}
-
-          const revenue = Number(top._sum?.total ?? 0);
-          const salesCount = Number(top._count?._all ?? 0);
+        if (top?.length) {
+          const t = top[0];
+          const revenue = Number(t?._sum?.total || 0);
+          const salesCount = Number(t?._count?._all || 0);
           topClient = {
-            clientId: top.clientId ?? null,
-            client: clientName,
-            email,
+            client: t.client,
             revenue,
             salesCount,
             avgTicket: salesCount ? Number((revenue / salesCount).toFixed(2)) : 0,
           };
         }
       }
-    } catch {
-      topClient = null;
-    }
+    } catch { topClient = null; }
 
     return {
       range: { from: start.toISOString(), to: end.toISOString() },
