@@ -1,30 +1,29 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { json, urlencoded } from 'express';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  
+
   app.enableCors({
-  origin: [
-    'http://localhost:3001',
-    'https://alkimyk-front.onrender.com'
-  ],
-  credentials: true,
-  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-  allowedHeaders: 'Content-Type,Authorization',
-  exposedHeaders: 'Content-Disposition',
-});
-const port = Number(process.env.PORT||3000);
-  app.enableCors({
-    origin: [
-      /http:\/\/localhost:\d+$/,           // dev local (3000, 3001, etc.)
-      /\.onrender\.com$/                   // front en Render
-    ],
-    credentials: true,                     // si vas a usar cookies; si no, puede ser false
-    methods: ['GET','HEAD','PUT','PATCH','POST','DELETE','OPTIONS'],
-    allowedHeaders: ['Content-Type','Authorization'],
-    exposedHeaders: ['Content-Disposition'],
+    origin: (origin, cb) => {
+      const allow = [
+        /^https?:\/\/localhost:3001$/,
+        /^https?:\/\/alkimyk-front\.onrender\.com$/,
+      ];
+      if (!origin) return cb(null, true); // curl / mismo origen, etc.
+      cb(allow.some(rx => rx.test(origin)) ? null : new Error('Not allowed by CORS'), true);
+    },
+    credentials: true,
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    allowedHeaders: 'Content-Type,Authorization',
+    exposedHeaders: 'Content-Disposition',
+    optionsSuccessStatus: 204,
   });
-  await app.listen(port, '0.0.0.0');
+
+  app.use(json({ limit: '10mb' }));
+  app.use(urlencoded({ extended: true }));
+
+  await app.listen(process.env.PORT || 3000);
 }
 bootstrap();

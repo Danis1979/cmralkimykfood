@@ -1,6 +1,6 @@
 import { ApiQuery, ApiTags } from '@nestjs/swagger';
-import { CacheInterceptor, CacheTTL } from "@nestjs/cache-manager";
-import { UseInterceptors, Controller, Get, Query } from "@nestjs/common";
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
+import { UseInterceptors, Controller, Get, Query } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 
 type Range = { start: Date; end: Date };
@@ -47,87 +47,143 @@ export class ReportsKpisController {
   @ApiQuery({ name: 'to', required: false, description: 'YYYY-MM o ISO date' })
   async getKpis(@Query('from') from?: string, @Query('to') to?: string) {
     const { start, end } = parseRange(from, to);
-    const p: any = this.prisma;
-    const { sale, purchase, receivable, client, compras, precios_ingredientes } = p;
 
-    // Ventas
+    const p: any = this.prisma as any;
+    const sale = p.sale ?? p.Sale ?? p.ventas ?? p.Ventas;
+    const purchase = p.purchase ?? p.Purchase;            // puede NO existir
+    const receivable = p.receivable ?? p.Receivable;      // puede NO existir
+    const compras = p.compras;                             // fallback de purchases
+    const precios = p.precios_ingredientes;               // fallback precios
+
+    // --- SALES ---
     let sales = 0;
-    if (sale?.aggregate) {
-      const salesAgg = await sale.aggregate({
-        _sum: { total: true },
-        where: { status: 'EMITIDA', createdAt: { gte: start, lt: end } },
-      });
-      sales = Number(salesAgg._sum?.total ?? 0);
+    try {
+      if (sale?.aggregate) {
+        // 1º intento: esquemas con createdAt + status
+        try {
+          const agg = await sale.aggregate({
+            _sum: { total: true },
+            where: { createdAt: { gte: start, lt: end }, status: 'EMITIDA' },
+          });
+          sales = Number(agg._sum?.total || 0);
+        } catch {
+          // 2º intento: esquemas con 'date' sin status
+          const agg = await sale.aggregate({
+            _sum: { total: true },
+            where: { date: { gte: start, lt: end } },
+          });
+          sales = Number(agg._sum?.total || 0);
+        }
+      }
+    } catch {
+      sales = 0;
     }
 
-    // Compras (nativo o fallback con compras x precios_ingredientes)
+    // --- PURCHASES ---
     let purchases = 0;
-    if (purchase?.aggregate) {
-      const purchasesAgg = await purchase.aggregate({
-        _sum: { total: true },
-        where: { createdAt: { gte: start, lt: end } },
-      });
-      purchases = Number(purchasesAgg._sum?.total ?? 0);
-    } else if (compras?.groupBy && precios_ingredientes?.findMany) {
-      const grupos = await compras.groupBy({
-        by: ['ingrediente'],
-        _sum: { cantidad: true },
-        where: { fecha_pago: { gte: start, lt: end } },
-      });
-      const precios = await precios_ingredientes.findMany({
-        where: { ingrediente: { in: grupos.map((g: any) => g.ingrediente) } },
-      });
-      const mapa = new Map(precios.map((p: any) => [p.ingrediente, Number(p.precio_unitario || 0)]));
-      for (const g of grupos) {
-        const qty = Number(g._sum?.cantidad ?? 0);
-        const pu = mapa.get(g.ingrediente) || 0;
-        purchases += qty * pu;
+    try {
+      if (purchase?.aggregate) {
+        // 1º createdAt; 2º date
+        try {
+          const agg = await purchase.aggregate({
+            _sum: { total: true },
+            where: { createdAt: { gte: start, lt: end } },
+          });
+          purchases = Number(agg._sum?.total || 0);
+        } catch {
+          const agg = await purchase.aggregate({
+            _sum: { total: true },
+            where: { date: { gte: start, lt: end } },
+          });
+          purchases = Number(agg._sum?.total || 0);
+        }
+      } else if (compras?.groupBy && precios?.findMany) {
+        // Fallback: sumar cantidad * precio_unitario por ingrediente y rango de fecha
+        const items = await compras.groupBy({
+          by: ['ingrediente'],
+          _sum: { cantidad: true },
+          where: { fecha_pago: { gte: start, lt: end } },
+        });
+        const priceRows = await precios.findMany();
+        const priceMap = new Map(priceRows.map((r: any) => [r.ingrediente, Number(r.precio_unitario || 0)]));
+        purchases = items.reduce((acc: number, r: any) => acc + Number(r._sum?.cantidad || 0) * (priceMap.get(r.ingrediente) ?? 0), 0);
       }
+    } catch {
+      purchases = 0;
     }
 
-    // CxC pendientes
+    // --- RECEIVABLES ---
     let receivablesPending = 0;
-    if (receivable?.aggregate) {
-      const recAgg = await receivable.aggregate({
-        _sum: { balance: true },
-        where: { status: 'Pendiente' },
-      });
-      receivablesPending = Number(recAgg._sum?.balance ?? 0);
-    }
-
-    // Top cliente
-    let topClient: any = null;
-    if (sale?.groupBy) {
-      const topGroup = await sale.groupBy({
-        by: ['clientId'],
-        where: { status: 'EMITIDA', createdAt: { gte: start, lt: end } },
-        _sum: { total: true },
-        _count: { _all: true },
-        orderBy: { _sum: { total: 'desc' } },
-        take: 1,
-      });
-      if (topGroup.length) {
-        const top = topGroup[0];
-        const cli = top.clientId && client?.findUnique
-          ? await client.findUnique({ where: { id: top.clientId } })
-          : null;
-        const revenue = Number(top._sum?.total ?? 0);
-        const salesCount = Number(top._count?._all ?? 0);
-        topClient = {
-          clientId: top.clientId ?? null,
-          client: cli?.name ?? null,
-          email: cli?.email ?? null,
-          revenue,
-          salesCount,
-          avgTicket: salesCount ? Number((revenue / salesCount).toFixed(2)) : 0,
-        };
+    try {
+      if (receivable?.aggregate) {
+        // si no existe 'status', lo devolvemos todo
+        try {
+          const agg = await receivable.aggregate({
+            _sum: { balance: true },
+            where: { status: 'Pendiente' },
+          });
+          receivablesPending = Number(agg._sum?.balance || 0);
+        } catch {
+          const agg = await receivable.aggregate({ _sum: { balance: true } });
+          receivablesPending = Number(agg._sum?.balance || 0);
+        }
       }
+    } catch {
+      receivablesPending = 0;
     }
 
-    const net = sales - purchases;
+    // --- TOP CLIENT ---
+    let topClient: any = null;
+    try {
+      if (sale?.groupBy) {
+        // 1º intento: clientId
+        let group: any[] = [];
+        try {
+          group = await sale.groupBy({
+            by: ['clientId'],
+            where: {
+              ...( (sale?.fields?.status || true) && { status: 'EMITIDA' } ),
+              ...( (sale?.fields?.createdAt || false) ? { createdAt: { gte: start, lt: end } } : { date: { gte: start, lt: end } } ),
+            },
+            _sum: { total: true },
+            _count: { _all: true },
+            orderBy: { _sum: { total: 'desc' } },
+            take: 1,
+          });
+        } catch {
+          // 2º intento: 'client' (texto)
+          group = await sale.groupBy({
+            by: ['client'],
+            where: (sale?.fields?.createdAt)
+              ? { createdAt: { gte: start, lt: end } }
+              : { date: { gte: start, lt: end } },
+            _sum: { total: true },
+            _count: { _all: true },
+            orderBy: { _sum: { total: 'desc' } },
+            take: 1,
+          });
+        }
+
+        if (group.length) {
+          const top = group[0];
+          const revenue = Number(top._sum?.total || 0);
+          const salesCount = Number(top._count?._all || 0);
+          topClient = {
+            clientId: top.clientId ?? null,
+            client: top.client ?? null,
+            revenue,
+            salesCount,
+            avgTicket: salesCount ? Number((revenue / salesCount).toFixed(2)) : 0,
+          };
+        }
+      }
+    } catch {
+      topClient = null;
+    }
+
     return {
       range: { from: start.toISOString(), to: end.toISOString() },
-      totals: { sales, purchases, net },
+      totals: { sales, purchases, net: sales - purchases },
       receivablesPending,
       topClient,
     };
