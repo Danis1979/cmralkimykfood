@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>CMR — Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Arial,sans-serif;background:#0b1220;color:#e5e7eb;margin:0}
+    .container{max-width:1200px;margin:0 auto;padding:16px}
+    .row{display:grid;gap:16px}
+    .row.cols-2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+    .row.cols-5{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+    .card{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:12px;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+    label{font-size:12px;opacity:.8;margin-right:6px}
+    input,select,button{background:#0f172a;color:#e5e7eb;border:1px solid #334155;border-radius:8px;padding:6px 8px}
+    button{cursor:pointer}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:6px;border-bottom:1px solid #1f2937;font-size:14px}
+    th{opacity:.8;text-align:left}
+    .right{text-align:right}
+    #health_badge,#version_badge{position:fixed;top:10px;right:10px;background:#0f172a;border:1px solid #334155;border-radius:999px;padding:6px 10px;font-size:12px;display:flex;gap:6px;align-items:center}
+    #version_badge{top:42px}
+    #health_badge .dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:#888}
+    #toolbar{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-bottom:12px}
+    .muted{opacity:.7}
+  </style>  <!-- base() helper para evitar mixed-content http/https -->
+  <script>
+    (function(){
+      if (window.base) return;
+      window.base = function(){
+        const i=document.getElementById("api_base");
+        let v=(i&&i.value?i.value:location.origin).trim();
+        try{
+          const u=new URL(v);
+          if(location.protocol==="https:" && u.protocol==="http:" &&
+             (u.hostname==="localhost"||u.hostname==="127.0.0.1")){
+            u.protocol="https:"; v=u.origin; if(i) i.value=v;
+          }
+        }catch(e){}
+        return v;
+      };
+      window.el=(id)=>document.getElementById(id);
+      window.key=()=> (el('api_key')?.value||'').trim();
+    })();
+  </script>
+<script>
+(function(){
+  if (window.base) return;
+  window.base = function(){
+    const i=document.getElementById("api_base");
+    let v=(i&&i.value?i.value:location.origin).trim();
+    try{
+      const u=new URL(v);
+      if(location.protocol==="https:" && u.protocol==="http:" && (u.hostname==="localhost"||u.hostname==="127.0.0.1")){
+        u.protocol="https:"; v=u.origin; if(i) i.value=v;
+      }
+    }catch(e){}
+    return v;
+  };
+})();
+</script>
+<script src="/js/fetch.apikey.js"></script>
+<script src="/js/prefs.api.js"></script>
+<script src="/js/fetch.apikey.js"></script>
+<script src="/js/fetch.apikey.js"></script>
+</head>
+<body>
+  <div class="container">
+<section id="filters_toolbar" style="position:sticky;top:0;z-index:99999;background:#0b1020;color:#fff;padding:10px 12px;border-bottom:2px solid #22d3ee">
+  <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <label>Base <input id="api_base" placeholder="https://localhost:3000" style="min-width:220px"></label>
+    <label>API Key <input id="api_key" placeholder="supersecreta-123" style="min-width:220px"></label>
+    <label>Desde <input type="month" id="global_from" style="min-width:150px"></label>
+    <label>Hasta <input type="month" id="global_to" style="min-width:150px"></label>
+    <label>As of <input type="date" id="global_as_of" style="min-width:150px"></label>
+    <button id="btn_apply_filters">Aplicar</button>
+    <button id="btn_clear_filters" class="secondary">Limpiar</button>
+    <button id="qa_refresh_all">🔄 Refrescar</button>
+    <button id="qa_test_key">🔑 Probar clave/API</button>
+    <span id="qa_status" style="margin-left:8px;color:#ddd"></span>
+  </div>
+</section>    <!-- Toolbar -->
+    <div id="toolbar" class="card">
+      <div>
+        <label for="api_base">API Base</label>
+        <input id="api_base" value="" placeholder="https://localhost:3000" style="min-width:260px">
+      </div>
+      <div>
+        <label for="api_key">API Key</label>
+        <input id="api_key" value="" placeholder="x-api-key…">
+      </div>
+      <div>
+        <label for="global_from">Desde</label>
+        <input id="global_from" type="month">
+      </div>
+      <div>
+        <label for="global_to">Hasta</label>
+        <input id="global_to" type="month">
+      </div>
+      <div style="display:flex;gap:8px">
+        <button id="qa_test_key">🔑 Probar clave</button>
+        <button id="qa_refresh_all">↻ Refrescar</button>
+      </div>
+      <span id="qa_status" class="muted"></span>
+    </div>    <!-- KPIs -->
+    <section class="card">
+      <h2 style="margin:4px 0 12px">KPIs</h2>
+      <div class="row cols-5">
+        <div id="kpi_sales" class="card"></div>
+        <div id="kpi_purchases" class="card"></div>
+        <div id="kpi_net" class="card"></div>
+        <div id="kpi_recv" class="card"></div>
+        <div id="kpi_top_client" class="card"></div>
+      </div>
+    </section>    <!-- Actividad reciente -->
+    <section class="card" style="margin-top:16px">
+      <h2 style="margin:4px 0 12px">Actividad reciente</h2>
+      <div class="row cols-2">
+        <div class="card">
+          <h3 style="margin:0 0 8px">Producciones (últimas 10)</h3>
+          <table id="tbl_productions">
+            <thead><tr><th>Fecha</th><th>Dir</th><th>SKU</th><th>Nombre</th><th class="right">Qty</th></tr></thead>
+            <tbody><tr><td colspan="5">Cargando…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h3 style="margin:0 0 8px">Ctas por cobrar pendientes</h3>
+          <table id="tbl_receivables">
+            <thead><tr><th>Venc./Fecha</th><th>Cliente</th><th>Estado</th><th class="right">Saldo</th><th>Notas</th></tr></thead>
+            <tbody><tr><td colspan="5">Cargando…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>    <!-- Exportaciones CSV -->
+    <section class="card" style="margin-top:16px">
+      <h2 style="margin:4px 0 12px">Exportaciones CSV</h2>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button id="csv_top_clients">Top clientes</button>
+        <button id="csv_margin_by_product">Margen por producto</button>
+        <button id="csv_svp">Ventas vs Compras</button>
+        <button id="csv_inventory_value">Inventario</button>
+        <button id="csv_productions">Producciones</button>
+        <button id="csv_inventory_moves">Movimientos inventario</button>
+        <button id="csv_orders">Pedidos</button>
+      </div>
+    </section>  </div>  <!-- Health & Version badges -->
+  <div id="health_badge" title="API health — /health"><span class="dot"></span>health…</div>
+  <div id="version_badge" title="API version — /version">api …</div>  <!-- Vendor -->
+  <script src="/vendor/chart.umd.js"></script>  <!-- App JS externos que ya existen -->
+  <script src="/js/kpis.widgets.js"></script>
+  <script src="/js/activity.tables.js"></script>  <!-- Quick actions + badges + CSV hooks -->
+  <script>
+    (function(){
+      function span(){ return {
+        from: (document.getElementById('global_from')||{}).value || '',
+        to:   (document.getElementById('global_to')||{}).value   || ''
+      }}
+      function qs(obj){
+        const q=[]; for(const k in obj){ if(obj[k]) q.push(encodeURIComponent(k)+'='+encodeURIComponent(obj[k])) }
+        return q.length?('?'+q.join('&')):''
+      }
+      async function fetchJsonDash(path){
+        const url = base()+path;
+        const res = await fetch(url, { headers:{ 'x-api-key': key() }});
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        return res.json();
+      }
+      // Badges
+      async function ping(){
+        try{
+          const res = await fetch(base()+"/health");
+          const ok = res.ok;
+          const badge = document.getElementById('health_badge');
+          badge.querySelector('.dot').style.background = ok ? '#22c55e' : '#ef4444';
+          badge.style.borderColor = ok ? '#166534' : '#7f1d1d';
+          badge.style.background   = ok ? '#052e1a' : '#2a0b0b';
+          badge.lastChild.nodeValue = ok ? ' ok' : ' error';
+        }catch(_e){}
+      }
+      async function loadVer(){
+        try{
+          const res = await fetch(base()+"/version");
+          const j = await res.json();
+          document.getElementById('version_badge').textContent = j.name+' '+j.version+' · '+j.env;
+        }catch(_e){}
+      }
+      // CSV
+      function downloadCsv(path){
+        const {from,to}=span();
+        const u = base()+path+qs({from,to});
+        const a = document.createElement('a'); a.href=u; a.download='';
+        a.setAttribute('target','_blank'); document.body.appendChild(a); a.click(); a.remove();
+      }
+      document.addEventListener('DOMContentLoaded', ()=>{
+        // hooks
+        document.getElementById('csv_top_clients')     ?.addEventListener('click', ()=>downloadCsv('/reports/top-clients.csv'));
+        document.getElementById('csv_margin_by_product')?.addEventListener('click', ()=>downloadCsv('/reports/margin-by-product.csv'));
+        document.getElementById('csv_svp')             ?.addEventListener('click', ()=>downloadCsv('/reports/sales-vs-purchases.csv'));
+        document.getElementById('csv_inventory_value') ?.addEventListener('click', ()=>downloadCsv('/reports/inventory-value.csv'));
+        document.getElementById('csv_productions')     ?.addEventListener('click', ()=>downloadCsv('/reports/productions.csv'));
+        document.getElementById('csv_inventory_moves') ?.addEventListener('click', ()=>downloadCsv('/reports/inventory-moves.csv'));
+        document.getElementById('csv_orders')          ?.addEventListener('click', ()=>downloadCsv('/reports/orders.csv'));        // quick actions
+        document.getElementById('qa_test_key')?.addEventListener('click', async ()=>{
+          const s=document.getElementById('qa_status');
+          try{
+            const r=await fetch(base()+"/reports/kpis",{headers:{'x-api-key':key()}});
+            s.textContent = r.ok? 'OK' : ('Auth? '+r.status);
+            s.style.color = r.ok? '#22c55e' : '#ef4444';
+          }catch{ s.textContent='Error'; s.style.color='#ef4444' }
+          setTimeout(()=>s.textContent='',3500);
+        });
+        document.getElementById('qa_refresh_all')?.addEventListener('click', ()=>{
+          window.loadKpis?.(); window.loadActivity?.(); ping(); loadVer();
+        });        // primera carga
+        ping(); loadVer();
+        window.loadKpis?.();
+        window.loadActivity?.();
+        setInterval(ping, 15000);
+      });
+    })();
+  </script>
+<!-- ===== Ventas/Compras + Margen ===== -->
+<section class="card" style="margin-top:16px">
+  <h2 style="margin:4px 0 12px">Ventas vs Compras & Margen por producto</h2>
+  <div class="row cols-2">
+    <div class="card" style="height:300px">
+      <h3 style="margin:0 0 8px">Ventas vs Compras</h3>
+      <canvas id="chart_svp" style="width:100%;height:240px"></canvas>
+    </div>
+    <div class="card">
+      <h3 style="margin:0 0 8px">Top margen por producto</h3>
+      <table id="tbl_margin">
+        <thead>
+          <tr><th>SKU</th><th>Nombre</th><th class="right">Cant</th><th class="right">Venta</th><th class="right">Costo</th><th class="right">Margen</th></tr>
+        </thead>
+        <tbody><tr><td colspan="6">Cargando…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+<!-- ===== /Ventas/Compras + Margen ===== -->
+<!-- ===== Tablas adicionales ===== -->
+<section class="card" style="margin-top:16px">
+  <h2 style="margin:4px 0 12px">Clientes · Inventario · Stock bajo · Cheques</h2>
+  <div class="row cols-2">
+    <div class="card">
+      <h3 style="margin:0 0 8px">Top clientes</h3>
+      <table id="tbl_top_clients">
+        <thead><tr><th>Cliente</th><th>Email</th><th class="right">Ventas</th><th class="right">Facturado</th><th class="right">Ticket prom.</th></tr></thead>
+        <tbody><tr><td colspan="5">Cargando…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3 style="margin:0 0 8px">Valor de inventario</h3>
+      <table id="tbl_inventory_value">
+        <thead><tr><th>SKU</th><th>Nombre</th><th class="right">Stock</th><th class="right">Costo</th><th class="right">Valor</th></tr></thead>
+        <tbody><tr><td colspan="5">Cargando…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3 style="margin:0 0 8px">Stock bajo (Top 10)</h3>
+      <table id="tbl_low_stock">
+        <thead><tr><th>SKU</th><th>Nombre</th><th class="right">On hand</th></tr></thead>
+        <tbody><tr><td colspan="3">Cargando…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3 style="margin:0 0 8px">Cheques del mes</h3>
+      <table id="tbl_cheques_mes">
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Persona</th><th class="right">Importe</th><th>Estado</th></tr></thead>
+        <tbody><tr><td colspan="5">Cargando…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+<!-- ===== /Tablas adicionales ===== -->
+  <script src="/js/extra.widgets.js"></script>
+<script src="/js/actions.buttons.js"></script>
+<script src="/js/filters.global.js"></script>
+</body>
+</html>

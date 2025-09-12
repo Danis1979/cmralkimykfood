@@ -1,0 +1,127 @@
+<!-- ===================== RECEIVABLES AGING ===================== -->
+<section class="card" style="margin-top:24px;">
+  <h2 style="margin:0 0 12px 0;">Aging de Cuentas por Cobrar</h2>
+
+  <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+    <label>Fecha de corte:
+      <input type="date" id="aging_asof">
+    </label>
+    <button id="aging_load">Cargar</button>
+    <small id="aging_info" style="opacity:.7"></small>
+  </div>
+
+  <div style="margin-top:16px;">
+    <h3 style="margin:0 0 6px 0;">Totales</h3>
+    <table id="aging_totals" border="1" cellpadding="6">
+      <thead>
+        <tr>
+          <th>Current</th><th>1-30</th><th>31-60</th><th>61-90</th><th>90+</th><th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td colspan="6" style="text-align:center;opacity:.7">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div style="margin-top:16px;">
+    <h3 style="margin:0 0 6px 0;">Por cliente</h3>
+    <table id="aging_clients" border="1" cellpadding="6">
+      <thead>
+        <tr>
+          <th>Cliente</th><th>Email</th>
+          <th>Current</th><th>1-30</th><th>31-60</th><th>61-90</th><th>90+</th><th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td colspan="8" style="text-align:center;opacity:.7">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div id="aging_warn" style="display:none;color:#b00;margin-top:8px;"></div>
+</section>
+
+<script>
+(function(){
+  function el(id){ return document.getElementById(id); }
+  const K_API = "cmr_api_key";
+  const K_BASE = "cmr_base_url";
+
+  function apiKey(){ return localStorage.getItem(K_API) || (document.getElementById("apiKey")?.value || ""); }
+  function base(){ return (localStorage.getItem(K_BASE) || (document.getElementById("baseUrl")?.value || (location.origin))).replace(/\/+$/,""); }
+
+  async function apiFetch(path){
+    const headers = {};
+    const key = apiKey();
+    if (key) headers["x-api-key"] = key;
+    const res = await fetch(base()+path, { headers });
+    if (!res.ok) {
+      const errTxt = await res.text().catch(()=> "");
+      throw new Error("HTTP " + res.status + " " + res.statusText + " :: " + errTxt);
+    }
+    return res.json();
+  }
+
+  function fmt(n){ return new Intl.NumberFormat().format(n||0); }
+
+  function renderTotals(t){
+    const tb = el("aging_totals").querySelector("tbody");
+    tb.innerHTML = "<tr>"
+      + "<td>"+fmt(t["current"])+"</td>"
+      + "<td>"+fmt(t["1-30"])+"</td>"
+      + "<td>"+fmt(t["31-60"])+"</td>"
+      + "<td>"+fmt(t["61-90"])+"</td>"
+      + "<td>"+fmt(t["90+"])+"</td>"
+      + "<td><b>"+fmt(t["total"])+"</b></td>"
+      + "</tr>";
+  }
+
+  function renderClients(rows){
+    const tb = el("aging_clients").querySelector("tbody");
+    if (!rows || !rows.length) {
+      tb.innerHTML = '<tr><td colspan="8" style="text-align:center;opacity:.7">Sin datos</td></tr>';
+      return;
+    }
+    tb.innerHTML = rows.map(r => "<tr>"
+      + "<td>"+(r.client||"-")+"</td>"
+      + "<td>"+(r.email||"-")+"</td>"
+      + '<td style="text-align:right">'+fmt(r["current"])+"</td>"
+      + '<td style="text-align:right">'+fmt(r["1-30"])+"</td>"
+      + '<td style="text-align:right">'+fmt(r["31-60"])+"</td>"
+      + '<td style="text-align:right">'+fmt(r["61-90"])+"</td>"
+      + '<td style="text-align:right">'+fmt(r["90+"])+"</td>"
+      + '<td style="text-align:right"><b>'+fmt(r["total"])+"</b></td>"
+      + "</tr>").join("");
+  }
+
+  async function loadAging(){
+    el("aging_warn").style.display = "none";
+    const asof = el("aging_asof")?.value;
+    const qs = asof ? ("?as_of=" + encodeURIComponent(asof)) : "";
+    try{
+      const data = await apiFetch("/reports/receivables-aging"+qs);
+      el("aging_info").textContent = "Corte: " + (data.asOf || "");
+      renderTotals(data.totals || {});
+      renderClients(data.byClient || []);
+    }catch(e){
+      el("aging_warn").textContent = (e && e.message) ? e.message : String(e);
+      el("aging_warn").style.display = "block";
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", function(){
+    // Valor por defecto: hoy (local)
+    const inp = el("aging_asof");
+    if (inp && !inp.value) {
+      const d = new Date();
+      const pad = n => String(n).padStart(2,"0");
+      inp.value = d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
+    }
+    const btn = el("aging_load");
+    if (btn) btn.addEventListener("click", loadAging);
+    // Autoload
+    loadAging();
+  });
+})();
+</script>

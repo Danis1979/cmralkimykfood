@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>CMR UI mínima</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+    body { margin: 0; background: #0b1220; color: #e6edf3; }
+    header { padding: 12px 16px; display: flex; gap: 12px; align-items: center; border-bottom: 1px solid #1f2a44; position: sticky; top: 0; background: #0b1220; z-index: 2;}
+    input, select, button, textarea { background: #091424; color: #e6edf3; border: 1px solid #223153; border-radius: 8px; padding: 8px 10px; }
+    button { cursor: pointer; }
+    main { display: grid; grid-template-columns: repeat(auto-fit,minmax(320px,1fr)); gap: 12px; padding: 12px; }
+    section { border: 1px solid #1f2a44; border-radius: 12px; padding: 12px; background: #0e192e; }
+    h2 { margin: 0 0 10px; font-size: 16px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+    .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+    pre { background: #091424; padding: 10px; border-radius: 8px; overflow: auto; max-height: 220px; }
+    small { color: #98a6bd; }
+    .muted { color: #9fb0c5; font-size: 12px; }
+    .ok { color: #8bec8b; }
+    .warn { color: #ffd27d; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>CMR UI</strong>
+    <label>Base URL
+      <input id="baseUrl" value="http://localhost:3000" style="width: 240px; margin-left: 6px;">
+    </label>
+    <span id="health" class="muted">sin probar…</span>
+    <button onclick="ping()">Probar /health</button>
+  </header>
+
+  <main>
+    <section>
+      <h2>Productos</h2>
+      <div class="row">
+        <button onclick="getProducts()">Listar /products</button>
+        <button onclick="getStock()">Stock (todos)</button>
+      </div>
+      <div class="row">
+        <input id="skuStock" placeholder="SKU (p.ej. PT-CAPRESE-001)" />
+        <button onclick="getStockSku()">Stock por SKU</button>
+      </div>
+      <pre id="outProducts"></pre>
+    </section>
+
+    <section>
+      <h2>Pedidos</h2>
+      <div class="row">
+        <input id="clientEmail" value="demo@cliente.com" placeholder="Email cliente" />
+        <input id="orderNotes" placeholder="Notas" />
+      </div>
+      <div class="row-3">
+        <input id="orderSku" value="PT-CAPRESE-001" placeholder="SKU" />
+        <input id="orderQty" type="number" value="1" placeholder="Qty" />
+        <input id="orderPrice" type="number" value="1000" placeholder="Precio (opcional)" />
+      </div>
+      <button onclick="createOrder()">POST /orders (BORRADOR)</button>
+      <div class="row">
+        <input id="orderId" placeholder="orderId" />
+        <button onclick="confirmOrder()">/orders/:id/confirm</button>
+      </div>
+      <pre id="outOrders"></pre>
+    </section>
+
+    <section>
+      <h2>Entregas & Ventas</h2>
+      <div class="row">
+        <input id="deliverOrderId" placeholder="orderId" />
+        <button onclick="deliver()">/deliveries/confirm</button>
+      </div>
+      <div class="row">
+        <input id="saleOrderId" placeholder="orderId" />
+        <select id="salePM">
+          <option value="CuentaCorriente" selected>CuentaCorriente</option>
+          <option value="Contado">Contado</option>
+          <option value="Transferencia">Transferencia</option>
+          <option value="Cheque">Cheque</option>
+        </select>
+        <select id="saleInv">
+          <option value="B" selected>B</option>
+          <option value="A">A</option>
+        </select>
+      </div>
+      <button onclick="issueSale()">/sales/issue</button>
+      <pre id="outSales"></pre>
+    </section>
+
+    <section>
+      <h2>Cuentas por Cobrar</h2>
+      <div class="row">
+        <select id="arStatus">
+          <option value="">(todos)</option>
+          <option>Pendiente</option>
+          <option>Cobrado</option>
+          <option>Pagado</option>
+        </select>
+        <button onclick="listAR()">GET /receivables</button>
+      </div>
+      <div class="row">
+        <input id="arId" placeholder="receivableId" />
+        <input id="arAmount" type="number" placeholder="importe (transferencia)" />
+      </div>
+      <div class="row">
+        <button onclick="payTransfer()">/receivables/:id/pay/transfer</button>
+        <button onclick="payCheque()">/receivables/:id/pay/cheque</button>
+      </div>
+      <pre id="outAR"></pre>
+    </section>
+
+    <section>
+      <h2>Cheques</h2>
+      <div class="row">
+        <select id="chStatus">
+          <option value="">(todos)</option>
+          <option>RECIBIDO</option>
+          <option>DEPOSITADO</option>
+          <option>ACREDITADO</option>
+          <option>EMITIDO</option>
+          <option>ENTREGADO</option>
+          <option>DEBITADO</option>
+        </select>
+        <button onclick="listCheques()">GET /cheques</button>
+      </div>
+      <div class="row">
+        <input id="chId" placeholder="chequeId" />
+        <button onclick="depositCheque()">/cheques/:id/deposit</button>
+        <button onclick="accreditCheque()">/cheques/:id/accredit</button>
+      </div>
+      <div class="row">
+        <input id="chEmitId" placeholder="chequeId (emitido)" />
+        <button onclick="deliverEmitted()">/cheques/emitted/:id/deliver</button>
+        <button onclick="debitEmitted()">/cheques/emitted/:id/debit</button>
+      </div>
+      <pre id="outCheques"></pre>
+    </section>
+
+    <section>
+      <h2>Compras (MP)</h2>
+      <div class="row">
+        <input id="pSupplier" value="Proveedor Demo" placeholder="Proveedor" />
+        <input id="pNotes" placeholder="Notas" />
+      </div>
+      <div class="row-3">
+        <input id="pSku" value="MP-MASA-BASE" placeholder="SKU" />
+        <input id="pQty" type="number" value="2" placeholder="Qty" />
+        <input id="pPrice" type="number" value="500" placeholder="Precio" />
+      </div>
+      <button onclick="createPurchase()">POST /purchases (cheque emitido)</button>
+      <pre id="outPurchases"></pre>
+    </section>
+
+    <section>
+      <h2>KPI Caja</h2>
+      <button onclick="getBalances()">GET /ledger/balances</button>
+      <pre id="outBalances"></pre>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const j = (x) => JSON.stringify(x, null, 2);
+    const base = () => $('baseUrl').value.replace(/\/+$/, '');
+
+    async function fetchJSON(path, options = {}) {
+      const res = await fetch(base() + path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...options,
+      });
+      if (!res.ok) {
+        const errTxt = await res.text().catch(()=>'');
+        throw new Error(`HTTP ${res.status} ${res.statusText} :: ${errTxt}`);
+      }
+      const ct = res.headers.get('content-type') || '';
+      return ct.includes('application/json') ? res.json() : res.text();
+    }
+
+    async function ping() {
+      try {
+        const data = await fetchJSON('/health');
+        $('health').textContent = 'ok ' + (data.time || '');
+        $('health').className = 'ok';
+      } catch (e) {
+        $('health').textContent = 'ERROR: ' + e.message;
+        $('health').className = 'warn';
+      }
+    }
+
+    // Productos / Stock
+    async function getProducts() {
+      $('outProducts').textContent = 'Cargando...';
+      try { $('outProducts').textContent = j(await fetchJSON('/products')); }
+      catch(e){ $('outProducts').textContent = e.message; }
+    }
+    async function getStock() {
+      $('outProducts').textContent = 'Cargando...';
+      try { $('outProducts').textContent = j(await fetchJSON('/inventory/stock')); }
+      catch(e){ $('outProducts').textContent = e.message; }
+    }
+    async function getStockSku() {
+      const sku = $('skuStock').value.trim();
+      if (!sku) return alert('Ingresá SKU');
+      $('outProducts').textContent = 'Cargando...';
+      try { $('outProducts').textContent = j(await fetchJSON('/inventory/stock?sku=' + encodeURIComponent(sku))); }
+      catch(e){ $('outProducts').textContent = e.message; }
+    }
+
+    // Pedidos
+    async function createOrder() {
+      const body = {
+        clientEmail: $('clientEmail').value.trim(),
+        notes: $('orderNotes').value.trim() || undefined,
+        items: [{
+          sku: $('orderSku').value.trim(),
+          qty: Number($('orderQty').value || 0),
+          price: Number($('orderPrice').value || 0) || undefined
+        }]
+      };
+      $('outOrders').textContent = 'Creando...';
+      try {
+        const data = await fetchJSON('/orders', { method: 'POST', body: JSON.stringify(body) });
+        $('outOrders').textContent = j(data);
+        $('orderId').value = data.id || '';
+        $('deliverOrderId').value = data.id || '';
+        $('saleOrderId').value = data.id || '';
+      } catch(e){ $('outOrders').textContent = e.message; }
+    }
+    async function confirmOrder() {
+      const id = $('orderId').value.trim();
+      if (!id) return alert('Ingresá orderId');
+      $('outOrders').textContent = 'Confirmando...';
+      try { $('outOrders').textContent = j(await fetchJSON('/orders/' + id + '/confirm', { method: 'POST' })); }
+      catch(e){ $('outOrders').textContent = e.message; }
+    }
+
+    // Entrega & Venta
+    async function deliver() {
+      const id = $('deliverOrderId').value.trim();
+      if (!id) return alert('Ingresá orderId');
+      $('outSales').textContent = 'Entregando...';
+      try {
+        $('outSales').textContent = j(await fetchJSON('/deliveries/confirm', { method: 'POST', body: JSON.stringify({ orderId: id }) }));
+      } catch(e){ $('outSales').textContent = e.message; }
+    }
+    async function issueSale() {
+      const id = $('saleOrderId').value.trim();
+      if (!id) return alert('Ingresá orderId');
+      const body = { orderId: id, paymentMethod: $('salePM').value, invoiceType: $('saleInv').value };
+      $('outSales').textContent = 'Emitiendo venta...';
+      try { $('outSales').textContent = j(await fetchJSON('/sales/issue', { method: 'POST', body: JSON.stringify(body) })); }
+      catch(e){ $('outSales').textContent = e.message; }
+    }
+
+    // CxC
+    async function listAR() {
+      const status = $('arStatus').value;
+      $('outAR').textContent = 'Cargando...';
+      try {
+        const qs = status ? ('?status=' + encodeURIComponent(status)) : '';
+        $('outAR').textContent = j(await fetchJSON('/receivables' + qs));
+      } catch(e){ $('outAR').textContent = e.message; }
+    }
+    async function payTransfer() {
+      const id = $('arId').value.trim();
+      const amount = Number($('arAmount').value || 0);
+      if (!id || !amount) return alert('Ingresá receivableId y amount');
+      $('outAR').textContent = 'Pagando transferencia...';
+      try { $('outAR').textContent = j(await fetchJSON('/receivables/' + id + '/pay/transfer', { method: 'POST', body: JSON.stringify({ amount }) })); }
+      catch(e){ $('outAR').textContent = e.message; }
+    }
+    async function payCheque() {
+      const id = $('arId').value.trim();
+      if (!id) return alert('Ingresá receivableId');
+      $('outAR').textContent = 'Registrando cheque...';
+      try {
+        $('outAR').textContent = j(await fetchJSON('/receivables/' + id + '/pay/cheque', { method: 'POST', body: JSON.stringify({ bank:'Banco Cliente', number:'AUTO', days:7 }) }));
+      } catch(e){ $('outAR').textContent = e.message; }
+    }
+
+    // Cheques
+    async function listCheques() {
+      const status = $('chStatus').value;
+      $('outCheques').textContent = 'Cargando...';
+      try {
+        const qs = status ? ('?status=' + encodeURIComponent(status)) : '';
+        $('outCheques').textContent = j(await fetchJSON('/cheques' + qs));
+      } catch(e){ $('outCheques').textContent = e.message; }
+    }
+    async function depositCheque() {
+      const id = $('chId').value.trim();
+      if (!id) return alert('Ingresá chequeId');
+      $('outCheques').textContent = 'Depositando...';
+      try { $('outCheques').textContent = j(await fetchJSON('/cheques/' + id + '/deposit', { method: 'POST' })); }
+      catch(e){ $('outCheques').textContent = e.message; }
+    }
+    async function accreditCheque() {
+      const id = $('chId').value.trim();
+      if (!id) return alert('Ingresá chequeId');
+      $('outCheques').textContent = 'Acreditando...';
+      try { $('outCheques').textContent = j(await fetchJSON('/cheques/' + id + '/accredit', { method: 'POST' })); }
+      catch(e){ $('outCheques').textContent = e.message; }
+    }
+    async function deliverEmitted() {
+      const id = $('chEmitId').value.trim();
+      if (!id) return alert('Ingresá chequeId (emitido)');
+      $('outCheques').textContent = 'Entregando cheque emitido...';
+      try { $('outCheques').textContent = j(await fetchJSON('/cheques/emitted/' + id + '/deliver', { method: 'POST' })); }
+      catch(e){ $('outCheques').textContent = e.message; }
+    }
+    async function debitEmitted() {
+      const id = $('chEmitId').value.trim();
+      if (!id) return alert('Ingresá chequeId (emitido)');
+      $('outCheques').textContent = 'Debitando cheque emitido...';
+      try { $('outCheques').textContent = j(await fetchJSON('/cheques/emitted/' + id + '/debit', { method: 'POST' })); }
+      catch(e){ $('outCheques').textContent = e.message; }
+    }
+
+    // Compras
+    async function createPurchase() {
+      const body = {
+        supplierName: $('pSupplier').value.trim(),
+        notes: $('pNotes').value.trim() || undefined,
+        items: [{ sku: $('pSku').value.trim(), qty: Number($('pQty').value || 0), price: Number($('pPrice').value || 0) }]
+      };
+      $('outPurchases').textContent = 'Creando compra...';
+      try { $('outPurchases').textContent = j(await fetchJSON('/purchases', { method: 'POST', body: JSON.stringify(body) })); }
+      catch(e){ $('outPurchases').textContent = e.message; }
+    }
+
+    // Ledger
+    async function getBalances() {
+      $('outBalances').textContent = 'Calculando...';
+      try { $('outBalances').textContent = j(await fetchJSON('/ledger/balances')); }
+      catch(e){ $('outBalances').textContent = e.message; }
+    }
+
+    // Arranque
+    ping(); getProducts(); getBalances();
+  </script>
+</body>
+</html>

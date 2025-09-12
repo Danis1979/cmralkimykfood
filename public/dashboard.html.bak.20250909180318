@@ -1,0 +1,19 @@
+<!-- ===== base() helper ===== -->
+<script>
+(function(){
+  if (window.base) return;
+  window.base = function(){
+    const i=document.getElementById("api_base");
+    let v=(i&&i.value?i.value:location.origin).trim();
+    try{
+      const u=new URL(v);
+      if(location.protocol==="https:" && u.protocol==="http:" &&
+         (u.hostname==="localhost"||u.hostname==="127.0.0.1")){
+        u.protocol="https:"; v=u.origin; if(i) i.value=v;
+      }
+    }catch(e){}
+    return v;
+  };
+})();
+</script>
+<!-- ===== /base() helper ===== -->

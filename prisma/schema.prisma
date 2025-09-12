@@ -1,0 +1,97 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model alembic_version {
+  version_num String @id(map: "alembic_version_pkc") @db.VarChar(32)
+}
+
+model compras {
+  id            Int      @id @default(autoincrement())
+  usuario_email String   @db.VarChar(100)
+  ingrediente   String   @db.VarChar(100)
+  cantidad      Float
+  proveedor     String   @db.VarChar(100)
+  forma_pago    String   @db.VarChar(50)
+  fecha_pago    DateTime @db.Date
+}
+
+model costos_fijos {
+  id            Int    @id @default(autoincrement())
+  usuario_email String @db.VarChar(100)
+  nombre        String @db.VarChar(100)
+  monto         Float
+}
+
+model precios_ingredientes {
+  id              Int    @id @default(autoincrement())
+  usuario_email   String @db.VarChar(100)
+  ingrediente     String @db.VarChar(100)
+  precio_unitario Float
+}
+
+model precios_venta_sabor {
+  id            Int    @id @default(autoincrement())
+  usuario_email String @db.VarChar(100)
+  sabor         String @db.VarChar(100)
+  precio        Float
+}
+
+model produccion {
+  id            Int       @id @default(autoincrement())
+  usuario_email String    @db.VarChar(100)
+  fecha         DateTime? @db.Timestamp(6)
+  sabor         String    @db.VarChar(50)
+  canastos      Int
+}
+
+model produccion_diaria {
+  id                Int      @id @default(autoincrement())
+  fecha             DateTime @db.Date
+  sabor             String   @db.VarChar(100)
+  cantidad_canastos Int
+}
+
+model proveedores {
+  id     Int    @id @default(autoincrement())
+  nombre String @db.VarChar(100)
+}
+
+model resumen_historico {
+  id             Int       @id @default(autoincrement())
+  usuario_email  String    @db.VarChar(100)
+  fecha          DateTime? @db.Timestamp(6)
+  total_canastos Int?
+  total_cajas    Int?
+  total_facturar Float?
+  total_con_iva  Float?
+  ganancia_total Float?
+  rentabilidad   Float?
+}
+
+model usuarios {
+  id       Int    @id @default(autoincrement())
+  nombre   String @db.VarChar(100)
+  email    String @unique @db.VarChar(100)
+  password String @db.VarChar(200)
+  rol      String @db.VarChar(50)
+}
+
+/**
+ * Modelo que usa el código: mapea a la tabla existente "ventas"
+ */
+model Sale {
+  id        Int      @id @default(autoincrement())
+  date      DateTime @map("fecha") @db.Date
+  docType   String   @map("tipo_comprobante") @db.VarChar(20)
+  docNumber String   @map("numero") @db.VarChar(50)
+  client    String   @map("cliente") @db.VarChar(100)
+  total     Float    @map("importe_bruto")
+
+  @@map("ventas")
+}

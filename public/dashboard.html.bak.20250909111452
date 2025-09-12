@@ -1,0 +1,1255 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <title>CMR Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu; margin:20px; color:#222}
+    h1{margin:0 0 16px}
+    .row{display:flex; gap:16px; flex-wrap:wrap; margin-bottom:12px}
+    .card{border:1px solid #e5e7eb; border-radius:12px; padding:14px; flex:1; min-width:300px; background:#fff}
+    label{font-size:12px; color:#555; display:block; margin-bottom:6px}
+    input,select,button{padding:8px; border-radius:8px; border:1px solid #d1d5db}
+    button{cursor:pointer}
+    table{border-collapse:collapse; width:100%; font-size:12px}
+    th,td{border:1px solid #eee; padding:6px; text-align:left}
+    th{background:#f9fafb}
+    .actions{display:flex; gap:8px; align-items:end}
+    .muted{color:#666; font-size:12px}
+    .sum{font-weight:600}
+    .grid{display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:16px}
+  </style>
+</head>
+<body>
+  <h1>CMR Dashboard</h1>
+
+  <div class="row">
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>Base URL</label>
+          <input id="baseUrl" placeholder="http://localhost:3000" style="width:260px">
+        </div>
+        <div>
+          <label>API Key</label>
+          <input id="apiKey" placeholder="x-api-key" style="width:220px">
+        </div>
+        <div class="actions">
+          <button id="btnPing">Probar /health</button>
+          <span id="pingOut" class="muted"></span>
+        </div>
+      </div>
+      <div class="muted">Se guardan en localStorage.</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- ORDERS -->
+    <div class="card">
+      <h3>Orders</h3>
+      <div class="row">
+        <div><label>Status</label>
+          <select id="ord_status">
+            <option value="">(todos)</option>
+            <option>CONFIRMADO</option>
+            <option>ENTREGADO</option>
+            <option>CANCELADO</option>
+            <option>BORRADOR</option>
+          </select>
+        </div>
+        <div><label>Cliente (email)</label><input id="ord_client" placeholder="demo@cliente.com"></div>
+        <div><label>Desde</label><input id="ord_from" type="date"></div>
+        <div><label>Hasta</label><input id="ord_to" type="date"></div>
+        <div class="actions">
+          <button id="btnOrders">Buscar</button>
+        </div>
+      </div>
+      <div class="muted" id="ord_info"></div>
+      <div style="max-height:260px; overflow:auto">
+        <table id="ord_tbl"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <!-- CHEQUES -->
+    <div class="card">
+      <h3>Cheques</h3>
+      <div class="row">
+        <div><label>Tipo</label>
+          <select id="chq_type">
+            <option value="">(todos)</option>
+            <option value="recibido">recibido</option>
+            <option value="emitido">emitido</option>
+          </select>
+        </div>
+        <div><label>Status</label>
+          <select id="chq_status">
+            <option value="">(todos)</option>
+            <option>RECIBIDO</option><option>DEPOSITADO</option><option>ACREDITADO</option>
+            <option>EMITIDO</option><option>ENTREGADO</option><option>DEBITADO</option>
+          </select>
+        </div>
+        <div><label>Vence desde</label><input id="chq_due_from" type="date"></div>
+        <div><label>Vence hasta</label><input id="chq_due_to" type="date"></div>
+        <div class="actions">
+          <button id="btnCheques">Buscar</button>
+        </div>
+      </div>
+      <div class="muted" id="chq_info"></div>
+      <div style="max-height:260px; overflow:auto">
+        <table id="chq_tbl"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <!-- RECEIVABLES -->
+    <div class="card">
+      <h3>Cuentas por Cobrar</h3>
+      <div class="row">
+        <div><label>Status</label>
+          <select id="rcv_status">
+            <option value="">(todos)</option>
+            <option>Pendiente</option><option>Vencido</option><option>Pagado</option>
+          </select>
+        </div>
+        <div><label>Cliente (email)</label><input id="rcv_client" placeholder="demo@cliente.com"></div>
+        <div><label>Vence desde</label><input id="rcv_due_from" type="date"></div>
+        <div><label>Vence hasta</label><input id="rcv_due_to" type="date"></div>
+        <div class="actions">
+          <button id="btnReceivables">Buscar</button>
+        </div>
+      </div>
+      <div class="muted" id="rcv_info"></div>
+      <div style="max-height:260px; overflow:auto">
+        <table id="rcv_tbl"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- helpers ---
+    const K_API="cmr_api_key", K_BASE="cmr_base_url";
+    function el(id){ return document.getElementById(id); }
+    function base(){ return (el('baseUrl').value || 'http://localhost:3000').replace(/\/+$/,''); }
+    function headers(){
+      const h={'Content-Type':'application/json'};
+      const key=(el('apiKey').value||'').trim();
+      if(key) h['x-api-key']=key;
+      return h;
+    }
+    async function get(path){
+      const res = await fetch(base()+path,{headers:headers()});
+      if(!res.ok){ throw new Error(res.status+' '+res.statusText+': '+(await res.text())); }
+      return res.json();
+    }
+    function setTable(tblId, cols, rows){
+      const thead = el(tblId).querySelector('thead');
+      const tbody = el(tblId).querySelector('tbody');
+      thead.innerHTML = '<tr>' + cols.map(c=>'<th>'+c+'</th>').join('') + '</tr>';
+      tbody.innerHTML = rows.map(r=>'<tr>' + r.map(c=>'<td>'+c+'</td>').join('') + '</tr>').join('');
+    }
+    function fmt(n){ return new Intl.NumberFormat('es-AR', {maximumFractionDigits:2}).format(n||0); }
+    function iso(d){ return d ? new Date(d).toLocaleString() : ''; }
+
+    // persistencia
+    document.addEventListener('DOMContentLoaded', ()=>{
+      el('apiKey').value = localStorage.getItem(K_API)||'';
+      el('baseUrl').value = localStorage.getItem(K_BASE)||'http://localhost:3000';
+      el('apiKey').addEventListener('input', ()=>localStorage.setItem(K_API, el('apiKey').value));
+      el('baseUrl').addEventListener('input', ()=>localStorage.setItem(K_BASE, el('baseUrl').value));
+    });
+
+    // ping
+    el('btnPing').onclick = async ()=>{
+      try { const j = await get('/health'); el('pingOut').textContent='OK '+j.time; }
+      catch(e){ el('pingOut').textContent='ERROR '+e.message; }
+    };
+
+    // Orders
+    el('btnOrders').onclick = async ()=>{
+      const params = new URLSearchParams();
+      if(el('ord_status').value) params.set('status', el('ord_status').value);
+      if(el('ord_client').value) params.set('clientEmail', el('ord_client').value);
+      if(el('ord_from').value) params.set('date_from', el('ord_from').value);
+      if(el('ord_to').value) params.set('date_to', el('ord_to').value);
+      const j = await get('/orders-search' + (params.toString()?('?'+params.toString()):''));
+      el('ord_info').innerHTML = `Total: <span class="sum">${j.total}</span>`;
+      setTable('ord_tbl',
+        ['Fecha','Cliente','Estado','Items','Subtotal'],
+        j.items.map(o=>[
+          iso(o.createdAt), o.client, o.status,
+          o.items.map(i=>`${i.sku} x${i.qty}`).join('<br>'),
+          fmt(o.subtotal)
+        ]));
+    };
+
+    // Cheques
+    el('btnCheques').onclick = async ()=>{
+      const params = new URLSearchParams();
+      if(el('chq_type').value) params.set('type', el('chq_type').value);
+      if(el('chq_status').value) params.set('status', el('chq_status').value);
+      if(el('chq_due_from').value) params.set('due_from', el('chq_due_from').value);
+      if(el('chq_due_to').value) params.set('due_to', el('chq_due_to').value);
+      const j = await get('/cheques-search' + (params.toString()?('?'+params.toString()):''));
+      el('chq_info').innerHTML = `Recibidos: <span class="sum">${fmt(j.summary.recibidos)}</span> &nbsp;|&nbsp; Emitidos: <span class="sum">${fmt(j.summary.emitidos)}</span> &nbsp;|&nbsp; Neto: <span class="sum">${fmt(j.summary.neto)}</span>`;
+      setTable('chq_tbl',
+        ['Fecha','Tipo','Status','Banco','Número','Vencimiento','Importe'],
+        j.items.map(c=>[
+          iso(c.createdAt), c.type, c.status, c.bank||'', c.number||'', c.dueDate?new Date(c.dueDate).toLocaleDateString():'', fmt(c.amount)
+        ]));
+    };
+
+    // Receivables
+    el('btnReceivables').onclick = async ()=>{
+      const params = new URLSearchParams();
+      if(el('rcv_status').value) params.set('status', el('rcv_status').value);
+      if(el('rcv_client').value) params.set('clientEmail', el('rcv_client').value);
+      if(el('rcv_due_from').value) params.set('due_from', el('rcv_due_from').value);
+      if(el('rcv_due_to').value) params.set('due_to', el('rcv_due_to').value);
+      const j = await get('/receivables-search' + (params.toString()?('?'+params.toString()):''));
+      el('rcv_info').innerHTML = `Pendiente: <span class="sum">${fmt(j.summary.pendiente)}</span> &nbsp;|&nbsp; Pagado: <span class="sum">${fmt(j.summary.pagado)}</span> &nbsp;|&nbsp; Vencido: <span class="sum">${fmt(j.summary.vencido)}</span>`;
+      setTable('rcv_tbl',
+        ['Fecha','Cliente','Estado','Vence','Saldo','Factura/Sale'],
+        j.items.map(r=>[
+          iso(r.createdAt), r.client, r.status, r.dueDate?new Date(r.dueDate).toLocaleDateString():'', fmt(r.balance), r.saleId||''
+        ]));
+    };
+  </script>
+<section class="card" id="prod24" style="margin-top:16px">
+  <h2 style="margin:0 0 8px 0">Producción (últimas 24h)</h2>
+  <div id="prod24_warn" style="color:#a66;display:none;margin-bottom:6px"></div>
+  <div style="overflow:auto; max-height:300px; border:1px solid #ddd;">
+    <table id="prod24_tbl" style="width:100%; border-collapse:collapse">
+      <thead>
+        <tr style="background:#f8f8f8">
+          <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd">SKU</th>
+          <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd">Nombre</th>
+          <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd">IN</th>
+          <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd">OUT</th>
+          <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd">Neto</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card" id="chequesMes" style="margin-top:16px">
+  <h2 style="margin:0 0 8px 0">Cheques (mes actual)</h2>
+  <div id="cheq_warn" style="color:#a66;display:none;margin-bottom:6px"></div>
+  <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center">
+    <div>Recibidos: <b id="cheq_rec">0</b></div>
+    <div>Emitidos: <b id="cheq_emi">0</b></div>
+    <div>Neto: <b id="cheq_net">0</b></div>
+    <button id="cheq_reload" style="margin-left:auto">Actualizar</button>
+  </div>
+</section>
+
+<script id="dashProdChequesScript">
+(function(){
+  function el(id){ return document.getElementById(id); }
+  function base(){ return (document.getElementById("baseUrl")?.value || "http://localhost:3000").replace(/\/$/, ""); }
+  function key(){ return document.getElementById("apiKey")?.value || ""; }
+  async function fetchJsonDash(path){
+    const headers = {};
+    const k = key(); if (k) headers["x-api-key"] = k;
+    const res = await fetch(base()+path, { headers });
+    if (!res.ok) { const t = await res.text().catch(()=> ""); throw new Error(`HTTP ${res.status} ${res.statusText} :: ${t}`); }
+    const ct = res.headers.get("content-type")||"";
+    return ct.includes("application/json") ? res.json() : res.text();
+  }
+  function renderProd24(rows){
+    const tb = el("prod24_tbl").querySelector("tbody");
+    tb.innerHTML = rows.map(r => `<tr>
+      <td style="padding:6px;border-bottom:1px solid #eee">${r.sku||""}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee">${r.name||""}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee; text-align:right">${r.in||0}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee; text-align:right">${r.out||0}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee; text-align:right">${(r.in||0)-(r.out||0)}</td>
+    </tr>`).join("");
+  }
+  async function loadProd24(){
+    try{
+      el("prod24_warn").style.display="none";
+      // Traemos últimos N movimientos (suele alcanzar). Ajustable.
+      const data = await fetchJsonDash(`/ops/productions?take=200&skip=0`);
+      const items = (data.items||[]);
+      const since = Date.now() - 24*60*60*1000;
+      const recent = items.filter(x => new Date(x.date).getTime() >= since);
+      // Agrupar por SKU+Nombre y sumar IN/OUT
+      const map = new Map();
+      for (const it of recent){
+        const k = `${it.sku}::${it.name||""}`;
+        const acc = map.get(k) || { sku: it.sku, name: it.name, in: 0, out: 0 };
+        if (it.direction === 'IN') acc.in += Number(it.qty||0);
+        else acc.out += Number(it.qty||0);
+        map.set(k, acc);
+      }
+      const rows = Array.from(map.values()).sort((a,b)=> (b.in-b.out)-(a.in-a.out));
+      renderProd24(rows);
+    }catch(e){
+      el("prod24_warn").textContent = e.message||String(e);
+      el("prod24_warn").style.display = "block";
+    }
+  }
+
+  function ymd(d){ return d.toISOString().slice(0,10); }
+  function firstDayOfMonth(d){
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+  }
+  function firstDayNextMonth(d){
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth()+1, 1));
+  }
+  async function loadChequesMes(){
+    try{
+      el("cheq_warn").style.display="none";
+      const now = new Date();
+      const from = ymd(firstDayOfMonth(now));
+      const to = ymd(firstDayNextMonth(now));
+      const data = await fetchJsonDash(`/cheques-search?date_from=${from}&date_to=${to}`);
+      const s = data.summary || { recibidos:0, emitidos:0, neto:0 };
+      el("cheq_rec").textContent = Number(s.recibidos||0);
+      el("cheq_emi").textContent = Number(s.emitidos||0);
+      el("cheq_net").textContent = Number(s.neto||0);
+    }catch(e){
+      el("cheq_warn").textContent = e.message||String(e);
+      el("cheq_warn").style.display = "block";
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", ()=>{
+    loadProd24();
+    loadChequesMes();
+    const btn = document.getElementById("cheq_reload");
+    if (btn) btn.addEventListener("click", loadChequesMes);
+  });
+})();
+</script>
+<section class="card" id="lowStock" style="margin-top:16px">
+  <h2 style="margin:0 0 8px 0">Stock bajo</h2>
+  <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap">
+    <label>Umbral (≤ available)
+      <input id="ls_threshold" type="number" value="5" min="0" style="width:100px;margin-left:6px">
+    </label>
+    <label>Buscar
+      <input id="ls_search" placeholder="sku o nombre" style="width:220px;margin-left:6px">
+    </label>
+    <button id="ls_reload" style="margin-left:auto">Actualizar</button>
+  </div>
+  <div id="ls_warn" style="color:#a66;display:none;margin-top:6px"></div>
+  <div style="overflow:auto; max-height:360px; border:1px solid #ddd; margin-top:8px">
+    <table id="ls_tbl" style="width:100%; border-collapse:collapse">
+      <thead>
+        <tr style="background:#f8f8f8">
+          <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd">SKU</th>
+          <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd">Nombre</th>
+          <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd">OnHand</th>
+          <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd">Reservado</th>
+          <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd">Disponible</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<script id="lowStockScript">
+(function(){
+  function el(id){ return document.getElementById(id); }
+  function base(){ return (document.getElementById("baseUrl")?.value || "http://localhost:3000").replace(/\/$/, ""); }
+  function key(){ return document.getElementById("apiKey")?.value || ""; }
+  async function fetchJson(path){
+    const headers = {};
+    const k = key(); if (k) headers["x-api-key"] = k;
+    const res = await fetch(base()+path, { headers });
+    if (!res.ok) { const t = await res.text().catch(()=> ""); throw new Error(`HTTP ${res.status} ${res.statusText} :: ${t}`); }
+    const ct = res.headers.get("content-type")||"";
+    return ct.includes("application/json") ? res.json() : res.text();
+  }
+  function renderRows(rows){
+    const tb = el("ls_tbl").querySelector("tbody");
+    tb.innerHTML = rows.map(r => `<tr>
+      <td style="padding:6px;border-bottom:1px solid #eee">${r.sku}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee">${r.name||""}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee; text-align:right">${r.onHand}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee; text-align:right">${r.reserved}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee; text-align:right">${r.available}</td>
+    </tr>`).join("");
+  }
+  async function loadLowStock(){
+    try{
+      el("ls_warn").style.display="none";
+      const data = await fetchJson("/inventory/stock");
+      const items = Array.isArray(data?.items) ? data.items : [];
+      const thr = Math.max(0, Number(el("ls_threshold").value||0));
+      const q = (el("ls_search").value||"").toLowerCase().trim();
+      let rows = items.filter(x => Number(x.available||0) <= thr);
+      if (q){
+        rows = rows.filter(x => (x.sku||"").toLowerCase().includes(q) || (x.name||"").toLowerCase().includes(q));
+      }
+      rows.sort((a,b)=> Number(a.available)-Number(b.available));
+      renderRows(rows);
+    }catch(e){
+      el("ls_warn").textContent = e.message||String(e);
+      el("ls_warn").style.display="block";
+    }
+  }
+  document.addEventListener("DOMContentLoaded", ()=>{
+    el("ls_reload")?.addEventListener("click", loadLowStock);
+    el("ls_threshold")?.addEventListener("input", ()=>{ /* live preview */ });
+    el("ls_search")?.addEventListener("input", ()=>{ loadLowStock(); });
+    loadLowStock(); // autoload
+  });
+})();
+</script>
+<section class="card" id="purchaseSuggest" style="margin-top:16px">
+  <h2 style="margin:0 0 8px 0">Compra sugerida</h2>
+  <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap">
+    <label>Objetivo de disponible
+      <input id="ps_target" type="number" value="20" min="0" style="width:110px;margin-left:6px">
+    </label>
+    <label>Solo MP (sku MP-)
+      <input id="ps_only_mp" type="checkbox" checked style="margin-left:6px">
+    </label>
+    <label>Proveedor
+      <input id="ps_supplier" value="Proveedor Demo" style="width:220px;margin-left:6px">
+    </label>
+    <label>Precio unit. (default)
+      <input id="ps_price" type="number" value="0" min="0" step="0.01" style="width:120px;margin-left:6px">
+    </label>
+    <label>Notas
+      <input id="ps_notes" value="Compra sugerida desde dashboard" style="width:280px;margin-left:6px">
+    </label>
+    <button id="ps_build">Generar payload</button>
+    <button id="ps_send" style="background:#155724;color:#fff;border:none;padding:6px 10px;border-radius:4px">Enviar compra</button>
+  </div>
+
+  <div id="ps_warn" style="color:#a66;display:none;margin-top:6px"></div>
+  <textarea id="ps_payload" rows="10" style="width:100%;margin-top:8px;font-family:ui-monospace,Menlo,Consolas,monospace"></textarea>
+</section>
+
+<script id="purchaseSuggestScript">
+(function(){
+  function el(id){ return document.getElementById(id); }
+  function base(){ return (document.getElementById("baseUrl")?.value || "http://localhost:3000").replace(/\/$/, ""); }
+  function key(){ return document.getElementById("apiKey")?.value || ""; }
+  async function fetchJson(path, opts){
+    const headers = opts?.headers || {};
+    const k = key(); if (k) headers["x-api-key"] = k;
+    const res = await fetch(base()+path, { ...opts, headers });
+    if (!res.ok) { const t = await res.text().catch(()=> ""); throw new Error(`HTTP ${res.status} ${res.statusText} :: ${t}`); }
+    const ct = res.headers.get("content-type")||"";
+    return ct.includes("application/json") ? res.json() : res.text();
+  }
+  function showWarn(msg){ const w=el("ps_warn"); w.textContent = msg; w.style.display="block"; }
+  function hideWarn(){ el("ps_warn").style.display="none"; }
+
+  async function buildPayload(){
+    try{
+      hideWarn();
+      const target = Math.max(0, Number(el("ps_target").value||0));
+      const onlyMP = !!el("ps_only_mp").checked;
+      const supplier = (el("ps_supplier").value||"").trim();
+      const defPrice = Math.max(0, Number(el("ps_price").value||0));
+      const notes = (el("ps_notes").value||"").trim();
+
+      const data = await fetchJson("/inventory/stock");
+      const items = Array.isArray(data?.items) ? data.items : [];
+      let low = items.filter(x => Number(x.available||0) < target);
+      if (onlyMP) low = low.filter(x => (x.sku||"").startsWith("MP-"));
+
+      const suggested = low.map(x => ({
+        sku: x.sku,
+        qty: Math.ceil(target - Number(x.available||0)),
+        price: defPrice
+      })).filter(it => it.qty > 0);
+
+      const payload = {
+        supplierName: supplier || "Proveedor",
+        items: suggested,
+        notes: notes || `Compra sugerida (objetivo ${target})`
+      };
+      el("ps_payload").value = JSON.stringify(payload, null, 2);
+    }catch(e){
+      showWarn(e.message||String(e));
+    }
+  }
+
+  async function sendPurchase(){
+    try{
+      hideWarn();
+      const raw = el("ps_payload").value.trim();
+      if (!raw) return showWarn("Primero generá el payload.");
+      let body; try { body = JSON.parse(raw); } catch(_){ return showWarn("El payload no es JSON válido."); }
+      const res = await fetchJson("/purchases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      el("ps_payload").value = JSON.stringify(res, null, 2);
+    }catch(e){
+      showWarn(e.message||String(e));
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", ()=>{
+    el("ps_build")?.addEventListener("click", buildPayload);
+    el("ps_send")?.addEventListener("click", sendPurchase);
+  });
+})();
+</script>
+<section class="card" id="editCosts" style="margin-top:16px">
+  <h2 style="margin:0 0 8px 0">Editar costos estándar</h2>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+    <button id="ec_reload" style="padding:6px 10px;border:1px solid #ccc;background:#fafafa;border-radius:4px">Recargar productos</button>
+    <span id="ec_status" style="color:#555"></span>
+  </div>
+  <div id="ec_warn" style="display:none;color:#a33;margin-bottom:6px"></div>
+  <div style="max-height:420px;overflow:auto;border:1px solid #ddd">
+    <table id="ec_tbl" style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr style="background:#f8f8f8">
+          <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd">SKU</th>
+          <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd">Nombre</th>
+          <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd">CostStd</th>
+          <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd">Acciones</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<script id="editCostsScript">
+(function(){
+  function el(id){ return document.getElementById(id); }
+  function base(){ return (document.getElementById("baseUrl")?.value || "http://localhost:3000").replace(/\/$/, ""); }
+  function key(){ return document.getElementById("apiKey")?.value || ""; }
+  function money(n){ return new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0}).format(Number(n||0)); }
+
+  async function fetchJson(path){
+    const headers = {}; const k = key(); if (k) headers['x-api-key'] = k;
+    const res = await fetch(base()+path, { headers });
+    if (!res.ok){ const t = await res.text().catch(()=> ''); throw new Error(`HTTP ${res.status} ${res.statusText} :: ${t}`); }
+    return res.json();
+  }
+  async function patchJson(path, body){
+    const headers = { 'Content-Type':'application/json' }; const k = key(); if (k) headers['x-api-key']=k;
+    const res = await fetch(base()+path, { method:'PATCH', headers, body: JSON.stringify(body) });
+    if (!res.ok){ const t = await res.text().catch(()=> ''); throw new Error(`HTTP ${res.status} ${res.statusText} :: ${t}`); }
+    return res.json();
+  }
+
+  function rowTemplate(p){
+    const val = Number(p.costStd||0);
+    const inputId = `ec_cost_${p.sku}`;
+    return `<tr>
+      <td style="padding:6px;border-bottom:1px solid #eee">${p.sku}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee">${p.name||''}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee;text-align:right">
+        <input id="${inputId}" type="number" step="0.01" min="0" value="${val}" style="width:120px;text-align:right;padding:4px">
+      </td>
+      <td style="padding:6px;border-bottom:1px solid #eee;text-align:right">
+        <button data-sku="${p.sku}" class="ec_save" style="padding:6px 10px;border:1px solid #ccc;background:#eaf7ea;border-radius:4px">Guardar</button>
+      </td>
+    </tr>`;
+  }
+
+  async function loadProducts(){
+    el('ec_warn').style.display='none';
+    el('ec_status').textContent = 'Cargando…';
+    try{
+      const data = await fetchJson('/products');
+      const items = data?.items || [];
+      const tb = el('ec_tbl').querySelector('tbody');
+      tb.innerHTML = items.map(rowTemplate).join('');
+      // listeners Guardar
+      tb.querySelectorAll('.ec_save').forEach(btn=>{
+        btn.addEventListener('click', async ()=>{
+          const sku = btn.getAttribute('data-sku');
+          const inp = el('ec_cost_'+sku);
+          const val = Number((inp?.value||'0'));
+          if (Number.isNaN(val) || val < 0){ alert('Costo inválido'); return; }
+          el('ec_status').textContent = `Guardando ${sku}…`;
+          try{
+            await patchJson(`/products/${encodeURIComponent(sku)}/cost`, { costStd: val });
+            el('ec_status').textContent = `OK: ${sku} → ${money(val)}`;
+          }catch(e){
+            el('ec_status').textContent = 'Error';
+            el('ec_warn').textContent = e.message||String(e);
+            el('ec_warn').style.display='block';
+          }
+        });
+      });
+      el('ec_status').textContent = `Productos: ${items.length}`;
+    }catch(e){
+      el('ec_warn').textContent = e.message||String(e);
+      el('ec_warn').style.display='block';
+      el('ec_status').textContent = 'Error';
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', ()=>{
+    el('ec_reload')?.addEventListener('click', loadProducts);
+    loadProducts();
+  });
+})();
+</script>
+<section class="card" id="svsp_card" style="margin-top:16px">
+  <h2 style="margin:0 0 8px 0">Ventas vs Compras (por mes)</h2>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+    <label>Desde: <input id="svsp_from" type="month"></label>
+    <label>Hasta: <input id="svsp_to" type="month"></label>
+    <button id="svsp_load" style="padding:6px 10px;border:1px solid #ccc;background:#fafafa;border-radius:4px">Cargar</button>
+    <span id="svsp_status" style="color:#555"></span>
+  </div>
+  <div id="svsp_warn" style="display:none;color:#a33;margin-bottom:6px"></div>
+
+  <div style="overflow:auto;border:1px solid #ddd;margin-bottom:12px">
+    <table id="svsp_tbl" style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr style="background:#f8f8f8">
+          <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd">Mes</th>
+          <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd">Ventas</th>
+          <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd">Compras</th>
+          <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd">Neto</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+      <tfoot>
+        <tr style="background:#fcfcfc">
+          <th style="text-align:left;padding:6px;border-top:1px solid #ddd">Totales</th>
+          <th style="text-align:right;padding:6px;border-top:1px solid #ddd" id="svsp_t_sales">–</th>
+          <th style="text-align:right;padding:6px;border-top:1px solid #ddd" id="svsp_t_purch">–</th>
+          <th style="text-align:right;padding:6px;border-top:1px solid #ddd" id="svsp_t_net">–</th>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <div>
+    <div id="svsp_chart" style="display:flex;align-items:flex-end;gap:10px;height:160px;border-left:1px solid #ddd;border-bottom:1px solid #ddd;padding:8px"></div>
+    <div id="svsp_chart_legend" style="font-size:12px;color:#555;margin-top:4px">
+      <span style="display:inline-block;width:10px;height:10px;background:#ddd;margin-right:4px;vertical-align:middle"></span> Ventas
+      &nbsp;&nbsp;
+      <span style="display:inline-block;width:10px;height:10px;background:#bbb;margin-right:4px;vertical-align:middle"></span> Compras
+    </div>
+  </div>
+</section>
+
+<script id="svsp_script">
+(function(){
+  function el(id){ return document.getElementById(id); }
+  function base(){ return (document.getElementById("baseUrl")?.value || "http://localhost:3000").replace(/\/$/, ""); }
+  function key(){ return document.getElementById("apiKey")?.value || ""; }
+  function money(n){ return new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0}).format(Number(n||0)); }
+
+  async function fetchJson(path){
+    const headers = {}; const k = key(); if (k) headers['x-api-key'] = k;
+    const res = await fetch(base()+path, { headers });
+    if (!res.ok){ const t = await res.text().catch(()=> ''); throw new Error(`HTTP ${res.status} ${res.statusText} :: ${t}`); }
+    return res.json();
+  }
+
+  function setMonthInputsDefaults(){
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth()+1).padStart(2,'0');
+    const ym = `${y}-${m}`;
+    el('svsp_from').value = ym;
+    el('svsp_to').value = ym;
+  }
+
+  function renderTable(items, totals){
+    const tb = el('svsp_tbl').querySelector('tbody');
+    tb.innerHTML = items.map(r => `
+      <tr>
+        <td style="padding:6px;border-bottom:1px solid #eee">${r.month}</td>
+        <td style="padding:6px;border-bottom:1px solid #eee;text-align:right">${money(r.sales)}</td>
+        <td style="padding:6px;border-bottom:1px solid #eee;text-align:right">${money(r.purchases)}</td>
+        <td style="padding:6px;border-bottom:1px solid #eee;text-align:right">${money(r.net)}</td>
+      </tr>
+    `).join('');
+    el('svsp_t_sales').textContent = money(totals.sales);
+    el('svsp_t_purch').textContent = money(totals.purchases);
+    el('svsp_t_net').textContent = money(totals.net);
+  }
+
+  function renderBars(items){
+    const box = el('svsp_chart');
+    box.innerHTML = '';
+    const max = Math.max(1, ...items.map(r => Math.max(r.sales, r.purchases)));
+    items.forEach(r=>{
+      const col = document.createElement('div');
+      col.style.display = 'flex';
+      col.style.flexDirection = 'column';
+      col.style.alignItems = 'center';
+      col.style.width = '36px';
+
+      const barBox = document.createElement('div');
+      barBox.style.display='flex';
+      barBox.style.alignItems='flex-end';
+      barBox.style.gap='4px';
+      barBox.style.height='140px';
+
+      const b1 = document.createElement('div');
+      b1.style.width='12px';
+      b1.style.background='#ddd';
+      b1.style.height = Math.round((r.sales/max)*140)+'px';
+      const b2 = document.createElement('div');
+      b2.style.width='12px';
+      b2.style.background='#bbb';
+      b2.style.height = Math.round((r.purchases/max)*140)+'px';
+
+      barBox.appendChild(b1); barBox.appendChild(b2);
+
+      const lbl = document.createElement('div');
+      lbl.textContent = r.month.slice(5);
+      lbl.style.fontSize='11px';
+      lbl.style.marginTop='4px';
+
+      col.appendChild(barBox);
+      col.appendChild(lbl);
+      box.appendChild(col);
+    });
+  }
+
+  async function loadSVSP(){
+    el('svsp_warn').style.display='none';
+    const f = el('svsp_from').value; const t = el('svsp_to').value;
+    const qs = [];
+    if (f) qs.push('from='+encodeURIComponent(f));
+    if (t) qs.push('to='+encodeURIComponent(t));
+    el('svsp_status').textContent = 'Cargando…';
+    try{
+      const data = await fetchJson('/reports/sales-vs-purchases' + (qs.length?('?'+qs.join('&')):''));
+      renderTable(data.items||[], data.totals||{sales:0,purchases:0,net:0});
+      renderBars(data.items||[]);
+      el('svsp_status').textContent = `Meses: ${data.totalMonths||0}`;
+    }catch(e){
+      el('svsp_warn').textContent = e.message||String(e);
+      el('svsp_warn').style.display='block';
+      el('svsp_status').textContent = 'Error';
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', ()=>{
+    setMonthInputsDefaults();
+    el('svsp_load')?.addEventListener('click', loadSVSP);
+    loadSVSP();
+  });
+})();
+</script>
+<!-- ===================== RECEIVABLES AGING ===================== -->
+<section class="card" style="margin-top:24px;">
+  <h2 style="margin:0 0 12px 0;">Aging de Cuentas por Cobrar</h2>
+
+  <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+    <label>Fecha de corte:
+      <input type="date" id="aging_asof">
+    </label>
+    <button id="aging_load">Cargar</button>
+    <small id="aging_info" style="opacity:.7"></small>
+  </div>
+
+  <div style="margin-top:16px;">
+    <h3 style="margin:0 0 6px 0;">Totales</h3>
+    <table id="aging_totals" border="1" cellpadding="6">
+      <thead>
+        <tr>
+          <th>Current</th><th>1-30</th><th>31-60</th><th>61-90</th><th>90+</th><th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td colspan="6" style="text-align:center;opacity:.7">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div style="margin-top:16px;">
+    <h3 style="margin:0 0 6px 0;">Por cliente</h3>
+    <table id="aging_clients" border="1" cellpadding="6">
+      <thead>
+        <tr>
+          <th>Cliente</th><th>Email</th>
+          <th>Current</th><th>1-30</th><th>31-60</th><th>61-90</th><th>90+</th><th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td colspan="8" style="text-align:center;opacity:.7">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div id="aging_warn" style="display:none;color:#b00;margin-top:8px;"></div>
+</section>
+
+<script>
+(function(){
+  function el(id){ return document.getElementById(id); }
+  const K_API = "cmr_api_key";
+  const K_BASE = "cmr_base_url";
+
+  function apiKey(){ return localStorage.getItem(K_API) || (document.getElementById("apiKey")?.value || ""); }
+  function base(){ return (localStorage.getItem(K_BASE) || (document.getElementById("baseUrl")?.value || (location.origin))).replace(/\/+$/,""); }
+
+  async function apiFetch(path){
+    const headers = {};
+    const key = apiKey();
+    if (key) headers["x-api-key"] = key;
+    const res = await fetch(base()+path, { headers });
+    if (!res.ok) {
+      const errTxt = await res.text().catch(()=> "");
+      throw new Error("HTTP " + res.status + " " + res.statusText + " :: " + errTxt);
+    }
+    return res.json();
+  }
+
+  function fmt(n){ return new Intl.NumberFormat().format(n||0); }
+
+  function renderTotals(t){
+    const tb = el("aging_totals").querySelector("tbody");
+    tb.innerHTML = "<tr>"
+      + "<td>"+fmt(t["current"])+"</td>"
+      + "<td>"+fmt(t["1-30"])+"</td>"
+      + "<td>"+fmt(t["31-60"])+"</td>"
+      + "<td>"+fmt(t["61-90"])+"</td>"
+      + "<td>"+fmt(t["90+"])+"</td>"
+      + "<td><b>"+fmt(t["total"])+"</b></td>"
+      + "</tr>";
+  }
+
+  function renderClients(rows){
+    const tb = el("aging_clients").querySelector("tbody");
+    if (!rows || !rows.length) {
+      tb.innerHTML = '<tr><td colspan="8" style="text-align:center;opacity:.7">Sin datos</td></tr>';
+      return;
+    }
+    tb.innerHTML = rows.map(r => "<tr>"
+      + "<td>"+(r.client||"-")+"</td>"
+      + "<td>"+(r.email||"-")+"</td>"
+      + '<td style="text-align:right">'+fmt(r["current"])+"</td>"
+      + '<td style="text-align:right">'+fmt(r["1-30"])+"</td>"
+      + '<td style="text-align:right">'+fmt(r["31-60"])+"</td>"
+      + '<td style="text-align:right">'+fmt(r["61-90"])+"</td>"
+      + '<td style="text-align:right">'+fmt(r["90+"])+"</td>"
+      + '<td style="text-align:right"><b>'+fmt(r["total"])+"</b></td>"
+      + "</tr>").join("");
+  }
+
+  async function loadAging(){
+    el("aging_warn").style.display = "none";
+    const asof = el("aging_asof")?.value;
+    const qs = asof ? ("?as_of=" + encodeURIComponent(asof)) : "";
+    try{
+      const data = await apiFetch("/reports/receivables-aging"+qs);
+      el("aging_info").textContent = "Corte: " + (data.asOf || "");
+      renderTotals(data.totals || {});
+      renderClients(data.byClient || []);
+    }catch(e){
+      el("aging_warn").textContent = (e && e.message) ? e.message : String(e);
+      el("aging_warn").style.display = "block";
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", function(){
+    // Valor por defecto: hoy (local)
+    const inp = el("aging_asof");
+    if (inp && !inp.value) {
+      const d = new Date();
+      const pad = n => String(n).padStart(2,"0");
+      inp.value = d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
+    }
+    const btn = el("aging_load");
+    if (btn) btn.addEventListener("click", loadAging);
+    // Autoload
+    loadAging();
+  });
+})();
+</script>
+
+<!-- ===================== VENTAS VS COMPRAS ===================== -->
+<section class="card" style="margin-top:24px;">
+  <h2 style="margin:0 0 12px 0;">Ventas vs Compras</h2>
+
+  <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+    <label>Desde (YYYY-MM):
+      <input type="month" id="svp_from">
+    </label>
+    <label>Hasta (YYYY-MM):
+      <input type="month" id="svp_to">
+    </label>
+    <button id="svp_load">Cargar</button>
+    <small id="svp_info" style="opacity:.7"></small>
+  </div>
+
+  <div style="margin-top:16px;">
+    <h3 style="margin:0 0 6px 0;">Totales</h3>
+    <table id="svp_totals" border="1" cellpadding="6">
+      <thead>
+        <tr><th>Ventas</th><th>Compras</th><th>Neto</th></tr>
+      </thead>
+      <tbody><tr><td colspan="3" style="text-align:center;opacity:.7">—</td></tr></tbody>
+    </table>
+  </div>
+
+  <div style="margin-top:16px;">
+    <h3 style="margin:0 0 6px 0;">Por mes</h3>
+    <table id="svp_rows" border="1" cellpadding="6">
+      <thead>
+        <tr><th>Mes</th><th>Ventas</th><th>Compras</th><th>Neto</th></tr>
+      </thead>
+      <tbody><tr><td colspan="4" style="text-align:center;opacity:.7">—</td></tr></tbody>
+    </table>
+  </div>
+
+  <div id="svp_warn" style="display:none;color:#b00;margin-top:8px;"></div>
+</section>
+
+<script>
+(function(){
+  function el(id){ return document.getElementById(id); }
+  const K_API="cmr_api_key", K_BASE="cmr_base_url";
+  function apiKey(){ return localStorage.getItem(K_API) || (document.getElementById("apiKey")?.value || ""); }
+  function base(){ return (localStorage.getItem(K_BASE) || (document.getElementById("baseUrl")?.value || location.origin)).replace(/\/+$/,""); }
+  function fmt(n){ return new Intl.NumberFormat().format(n||0); }
+
+  async function apiFetch(path){
+    const headers = {};
+    const key = apiKey();
+    if (key) headers["x-api-key"]=key;
+    const res = await fetch(base()+path, { headers });
+    if(!res.ok){ const t = await res.text().catch(()=> ""); throw new Error("HTTP "+res.status+" "+res.statusText+" :: "+t); }
+    return res.json();
+  }
+
+  function renderTotals(t){
+    const tb = el("svp_totals").querySelector("tbody");
+    tb.innerHTML = "<tr>"
+      + "<td>"+fmt(t.sales)+"</td>"
+      + "<td>"+fmt(t.purchases)+"</td>"
+      + "<td><b>"+fmt(t.net)+"</b></td>"
+      + "</tr>";
+  }
+
+  function renderRows(items){
+    const tb = el("svp_rows").querySelector("tbody");
+    if(!items || !items.length){
+      tb.innerHTML = '<tr><td colspan="4" style="text-align:center;opacity:.7">Sin datos</td></tr>';
+      return;
+    }
+    tb.innerHTML = items.map(r => "<tr>"
+      + "<td>"+r.month+"</td>"
+      + '<td style="text-align:right">'+fmt(r.sales)+"</td>"
+      + '<td style="text-align:right">'+fmt(r.purchases)+"</td>"
+      + '<td style="text-align:right"><b>'+fmt(r.net)+"</b></td>"
+      + "</tr>").join("");
+  }
+
+  async function loadSVP(){
+    el("svp_warn").style.display="none";
+    const f = el("svp_from")?.value, t = el("svp_to")?.value;
+    const qs = "?from="+encodeURIComponent(f)+"&to="+encodeURIComponent(t);
+    try{
+      const data = await apiFetch("/reports/sales-vs-purchases"+qs);
+      el("svp_info").textContent = "Rango: "+(data.range?.from||"")+" → "+(data.range?.to||"");
+      renderTotals(data.totals || {sales:0,purchases:0,net:0});
+      renderRows(data.items || []);
+    }catch(e){
+      el("svp_warn").textContent = (e && e.message) ? e.message : String(e);
+      el("svp_warn").style.display = "block";
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", function(){
+    // defaults a mes actual
+    const pad = n => String(n).padStart(2,"0");
+    const d = new Date(), mm = d.getUTCFullYear()+"-"+pad(d.getUTCMonth()+1);
+    const F = el("svp_from"), T = el("svp_to");
+    if(F && !F.value) F.value = mm;
+    if(T && !T.value) T.value = mm;
+
+    const btn = el("svp_load");
+    if (btn) btn.addEventListener("click", loadSVP);
+    loadSVP();
+  });
+})();
+</script>
+
+</body>
+</html>
+<script id="summary-card">
+(function(){
+  function el(id){ return document.getElementById(id); }
+  function mk(tag, attrs){ const n=document.createElement(tag); Object.entries(attrs||{}).forEach(([k,v])=>{ if(k==='innerHTML') n.innerHTML=v; else n.setAttribute(k,v); }); return n; }
+  function fmt(n){ return new Intl.NumberFormat('es-AR',{maximumFractionDigits:2}).format(n||0); }
+  function base(){ return (el('baseUrl').value || 'http://localhost:3000').replace(/\/+$/,''); }
+  function headers(){ const h={'Content-Type':'application/json'}; const key=(el('apiKey').value||'').trim(); if(key) h['x-api-key']=key; return h; }
+  async function get(path){ const res = await fetch(base()+path,{headers:headers()}); if(!res.ok) throw new Error(res.status+' '+res.statusText+': '+(await res.text())); return res.json(); }
+
+  async function refreshSummary(){
+    const sku = (el('sum_sku')?.value || 'PT-CAPRESE-001').trim();
+    const days = parseInt(el('sum_days')?.value||'7',10) || 7;
+    const today = new Date(); const to = new Date(today); to.setDate(to.getDate()+days);
+    const iso = (d)=>d.toISOString().slice(0,10);
+
+    const [ledger, rcv, chqRec7, chqEmi7, stock] = await Promise.all([
+      get('/ledger/balances'),
+      get('/receivables-search?status=Pendiente'),
+      get('/cheques-search?type=recibido&due_from='+iso(today)+'&due_to='+iso(to)),
+      get('/cheques-search?type=emitido&due_from='+iso(today)+'&due_to='+iso(to)),
+      get('/inventory/stock?sku='+encodeURIComponent(sku))
+    ]);
+
+    const banco = (ledger?.totals?.Banco)||0;
+    const rpend = (rcv?.summary?.pendiente)||0;
+    const rec7 = (chqRec7?.summary?.recibidos)||0;
+    const emi7 = (chqEmi7?.summary?.emitidos)||0;
+    const net7 = rec7 - emi7;
+    const st = stock?.items?.[0]||{};
+
+    el('sum_banco').textContent = fmt(banco);
+    el('sum_pend').textContent = fmt(rpend);
+    el('sum_chq7').textContent = fmt(net7) + ' (+'+fmt(rec7)+' / -'+fmt(emi7)+')';
+    el('sum_stock').textContent = (st.sku||sku)+': disp '+(st.available??'0')+' / onHand '+(st.onHand??'0');
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    const grid = document.querySelector('.grid');
+    const card = mk('div',{class:'card', id:'summaryCard', innerHTML:
+      '<h3>Resumen rápido</h3>'+
+      '<div class="row">'+
+        '<div><label>SKU PT clave</label><input id="sum_sku" value="PT-CAPRESE-001" style="width:200px"></div>'+
+        '<div><label>Horizonte cheques (días)</label><input id="sum_days" type="number" value="7" min="1" style="width:120px"></div>'+
+        '<div class="actions"><button id="btnSum">Refrescar</button></div>'+
+      '</div>'+
+      '<div class="row">'+
+        '<div><label>Banco</label><div class="sum" id="sum_banco">-</div></div>'+
+        '<div><label>CxC pendiente</label><div class="sum" id="sum_pend">-</div></div>'+
+        '<div><label>Cheques próximos (neto)</label><div class="sum" id="sum_chq7">-</div></div>'+
+        '<div><label>Stock PT</label><div class="sum" id="sum_stock">-</div></div>'+
+      '</div>'
+    });
+    (grid && grid.parentNode) ? grid.parentNode.insertBefore(card, grid) : document.body.insertBefore(card, document.body.firstChild);
+    document.getElementById('btnSum').addEventListener('click', ()=>refreshSummary().catch(e=>alert('Error resumen: '+e.message)));
+    // primer refresco automático
+    setTimeout(()=>refreshSummary().catch(()=>{}), 300);
+  });
+})();
+</script>
+<script id="csv-export">
+(function(){
+  function el(id){ return document.getElementById(id); }
+  function toCsvVal(v){ if(v==null) return ''; const s=String(v).replace(/"/g,'""'); return `"${s}"`; }
+  function downloadCSV(name, rows, headers){
+    const headerLine = headers.map(toCsvVal).join(',');
+    const lines = rows.map(r=> headers.map(h=>toCsvVal(r[h])).join(','));
+    const csv = [headerLine].concat(lines).join('\n');
+    const blob = new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); URL.revokeObjectURL(a.href);
+  }
+  function base(){ return (el('baseUrl').value || 'http://localhost:3000').replace(/\/+$/,''); }
+  function headers(){
+    const h={'Content-Type':'application/json'};
+    const key=(el('apiKey').value||'').trim();
+    if(key) h['x-api-key']=key;
+    return h;
+  }
+  async function get(path){
+    const res = await fetch(base()+path,{headers:headers()});
+    if(!res.ok){ throw new Error(res.status+' '+res.statusText+': '+(await res.text())); }
+    return res.json();
+  }
+  function iso(d){ return d ? new Date(d).toISOString() : ''; }
+
+  async function exportOrdersCsv(){
+    const params = new URLSearchParams();
+    if(el('ord_status').value) params.set('status', el('ord_status').value);
+    if(el('ord_client').value) params.set('clientEmail', el('ord_client').value);
+    if(el('ord_from').value) params.set('date_from', el('ord_from').value);
+    if(el('ord_to').value) params.set('date_to', el('ord_to').value);
+    const j = await get('/orders-search' + (params.toString()?('?'+params.toString()):''));
+    const rows=[];
+    (j.items||[]).forEach(o=>{
+      const common = { fecha: iso(o.createdAt), cliente: o.client, estado: o.status, subtotal: o.subtotal };
+      (o.items||[]).forEach(it=>{
+        rows.push({
+          ...common,
+          sku: it.sku, nombre: it.name, qty: it.qty, precio: it.price
+        });
+      });
+    });
+    downloadCSV('orders.csv', rows, ['fecha','cliente','estado','sku','nombre','qty','precio','subtotal']);
+  }
+
+  async function exportChequesCsv(){
+    const params = new URLSearchParams();
+    if(el('chq_type').value) params.set('type', el('chq_type').value);
+    if(el('chq_status').value) params.set('status', el('chq_status').value);
+    if(el('chq_due_from').value) params.set('due_from', el('chq_due_from').value);
+    if(el('chq_due_to').value) params.set('due_to', el('chq_due_to').value);
+    const j = await get('/cheques-search' + (params.toString()?('?'+params.toString()):''));
+    const rows = (j.items||[]).map(c=>({
+      fecha: iso(c.createdAt),
+      tipo: c.type,
+      status: c.status,
+      banco: c.bank||'',
+      numero: c.number||'',
+      vencimiento: iso(c.dueDate),
+      importe: c.amount
+    }));
+    downloadCSV('cheques.csv', rows, ['fecha','tipo','status','banco','numero','vencimiento','importe']);
+  }
+
+  async function exportReceivablesCsv(){
+    const params = new URLSearchParams();
+    if(el('rcv_status').value) params.set('status', el('rcv_status').value);
+    if(el('rcv_client').value) params.set('clientEmail', el('rcv_client').value);
+    if(el('rcv_due_from').value) params.set('due_from', el('rcv_due_from').value);
+    if(el('rcv_due_to').value) params.set('due_to', el('rcv_due_to').value);
+    const j = await get('/receivables-search' + (params.toString()?('?'+params.toString()):''));
+    const rows = (j.items||[]).map(r=>({
+      fecha: iso(r.createdAt),
+      cliente: r.client,
+      estado: r.status,
+      vence: iso(r.dueDate),
+      saldo: r.balance,
+      saleId: r.saleId||''
+    }));
+    downloadCSV('receivables.csv', rows, ['fecha','cliente','estado','vence','saldo','saleId']);
+  }
+
+  function addBtn(afterId, text, id, onClick){
+    const anchor = el(afterId);
+    if(!anchor || !anchor.parentNode) return;
+    const btn = document.createElement('button');
+    btn.id = id; btn.textContent = text; btn.style.marginLeft='8px';
+    anchor.parentNode.appendChild(btn);
+    btn.addEventListener('click', ()=>onClick().catch(e=>alert('Error CSV: '+e.message)));
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    addBtn('btnOrders', 'Exportar CSV', 'btnOrdersCsv', exportOrdersCsv);
+    addBtn('btnCheques', 'Exportar CSV', 'btnChequesCsv', exportChequesCsv);
+    addBtn('btnReceivables', 'Exportar CSV', 'btnReceivablesCsv', exportReceivablesCsv);
+  });
+})();
+</script>
+
+<!-- === Card: Margen por producto === -->
+<section id="card-margin" style="margin:24px 0; padding:16px; border:1px solid #ddd; border-radius:12px;">
+  <h2 style="margin:0 0 8px 0;">Margen por producto</h2>
+  <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end">
+    <label>Desde (YYYY-MM)
+      <input id="mg_from" type="month" />
+    </label>
+    <label>Hasta (YYYY-MM)
+      <input id="mg_to" type="month" />
+    </label>
+    <label>Top N
+      <input id="mg_limit" type="number" min="1" value="10" style="width:90px" />
+    </label>
+    <button id="mg_btn" style="padding:6px 10px; border:1px solid #999; border-radius:8px; background:#fafafa; cursor:pointer">Cargar</button>
+    <span id="mg_warn" style="display:none; color:#b00; font-weight:600; margin-left:8px"></span>
+  </div>
+
+  <div id="mg_totals" style="margin-top:10px; font-size:14px; color:#333"></div>
+
+  <div style="overflow:auto; margin-top:12px">
+    <table id="mg_table" style="width:100%; border-collapse:collapse;">
+      <thead>
+        <tr style="background:#f6f6f6">
+          <th style="text-align:left; padding:8px; border-bottom:1px solid #e5e5e5;">SKU</th>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid #e5e5e5;">Producto</th>
+          <th style="text-align:right; padding:8px; border-bottom:1px solid #e5e5e5;">Cant.</th>
+          <th style="text-align:right; padding:8px; border-bottom:1px solid #e5e5e5;">Ingresos</th>
+          <th style="text-align:right; padding:8px; border-bottom:1px solid #e5e5e5;">Costo</th>
+          <th style="text-align:right; padding:8px; border-bottom:1px solid #e5e5e5;">Margen</th>
+          <th style="text-align:right; padding:8px; border-bottom:1px solid #e5e5e5;">Margen %</th>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid #e5e5e5; width:240px;">Gráfico</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<script id="card-margin-script">
+(function(){
+  // Helpers defensivos (usan los existentes si ya están definidos)
+  const _base = (typeof base === 'function') ? base :
+    ()=> (document.getElementById('baseUrl')?.value || location.origin);
+  const _key  = (typeof key  === 'function') ? key  :
+    ()=> (document.getElementById('apiKey')?.value || '');
+
+  async function getJson(path){
+    const headers = {};
+    const k = _key(); if (k) headers['x-api-key'] = k;
+    const res = await fetch(_base()+path, { headers });
+    if(!res.ok){ const t = await res.text().catch(()=> ''); throw new Error(`HTTP ${res.status} ${res.statusText} :: ${t}`); }
+    const ct = res.headers.get('content-type') || '';
+    return ct.includes('application/json') ? res.json() : res.text();
+  }
+
+  function el(id){ return document.getElementById(id); }
+  const money = (n)=> new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0}).format(Number(n||0));
+  const pct   = (n)=> (Number(n||0)).toFixed(1)+'%';
+
+  function rowHtml(r, maxMargin){
+    const rel = maxMargin>0 ? Math.max(0, Math.min(100, Math.round((r.margin/maxMargin)*100))) : 0;
+    return `<tr>
+      <td style="padding:8px; border-bottom:1px solid #eee;">${r.sku}</td>
+      <td style="padding:8px; border-bottom:1px solid #eee;">${r.name||''}</td>
+      <td style="padding:8px; border-bottom:1px solid #eee; text-align:right">${r.qty}</td>
+      <td style="padding:8px; border-bottom:1px solid #eee; text-align:right">${money(r.revenue)}</td>
+      <td style="padding:8px; border-bottom:1px solid #eee; text-align:right">${money(r.cost)}</td>
+      <td style="padding:8px; border-bottom:1px solid #eee; text-align:right">${money(r.margin)}</td>
+      <td style="padding:8px; border-bottom:1px solid #eee; text-align:right">${pct(r.marginPct)}</td>
+      <td style="padding:8px; border-bottom:1px solid #eee;">
+        <div style="height:10px; background:#f0f0f0; border-radius:6px; overflow:hidden">
+          <div style="height:100%; width:${rel}%; background:#4caf50"></div>
+        </div>
+      </td>
+    </tr>`;
+  }
+
+  function monthVal(input){
+    const v = input?.value?.trim();
+    if(!v) return '';
+    // v = YYYY-MM
+    const [y,m] = v.split('-').map(Number);
+    if(!y || !m) return '';
+    return `${y.toString().padStart(4,'0')}-${m.toString().padStart(2,'0')}`;
+  }
+
+  async function loadMargin(){
+    el('mg_warn').style.display = 'none';
+    const from = monthVal(el('mg_from'));
+    const to   = monthVal(el('mg_to'));
+    const limit = Number(el('mg_limit')?.value || 10);
+    const qs = new URLSearchParams();
+    if (from) qs.set('from', from);
+    if (to)   qs.set('to', to);
+    if (limit) qs.set('limit', String(limit));
+
+    const data = await getJson('/reports/margin-by-product' + (qs.toString() ? ('?'+qs.toString()) : ''));
+    const items = data.items || [];
+    const maxMargin = Math.max(0, ...items.map(x=> x.margin||0));
+    const tbody = el('mg_table').querySelector('tbody');
+    tbody.innerHTML = items.map(r => rowHtml(r, maxMargin)).join('') || `<tr><td colspan="8" style="padding:10px; color:#666">Sin datos</td></tr>`;
+
+    const t = data.totals || { qty:0, revenue:0, cost:0, margin:0, marginPct:0 };
+    el('mg_totals').textContent =
+      `Total productos: ${data.totalProducts||0} • Cantidad: ${t.qty} • Ingresos: ${money(t.revenue)} • Costo: ${money(t.cost)} • Margen: ${money(t.margin)} (${pct((t.marginPct||0)*100)})`;
+  }
+
+  document.addEventListener('DOMContentLoaded', ()=>{
+    const btn = el('mg_btn'); if (btn) btn.addEventListener('click', ()=> loadMargin().catch(e=>{ el('mg_warn').textContent = e.message||String(e); el('mg_warn').style.display='inline'; }));
+    // Autoload con el mes actual
+    const now = new Date();
+    const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    if (el('mg_from')) el('mg_from').value = ym;
+    if (el('mg_to'))   el('mg_to').value   = ym;
+    loadMargin().catch(e=>{ el('mg_warn').textContent = e.message||String(e); el('mg_warn').style.display='inline'; });
+  });
+})();
+</script>

@@ -1,0 +1,12 @@
+services:
+- type: web
+  name: cmr-api
+  env: node
+  plan: free
+  buildCommand: npm run render-build
+  startCommand: npm run render-start
+  autoDeploy: true
+  healthCheckPath: /health
+  envVars:
+  - key: DATABASE_URL
+    sync: false
