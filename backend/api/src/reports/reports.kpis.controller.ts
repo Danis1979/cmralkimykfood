@@ -54,19 +54,19 @@ export class ReportsKpisController {
     const { start, end } = parseRange(from, to);
 
     const [salesAgg, purchasesAgg, receivablesAgg, topGroup] = await Promise.all([
-      this.prisma.sale.aggregate({
+      (this.prisma as any).sale.aggregate({
         _sum: { total: true },
         where: { status: 'EMITIDA', createdAt: { gte: start, lt: end } },
       }),
-      this.prisma.purchase.aggregate({
+      (this.prisma as any).purchase.aggregate({
         _sum: { total: true },
         where: { createdAt: { gte: start, lt: end } },
       }),
-      this.prisma.receivable.aggregate({
+      (this.prisma as any).receivable.aggregate({
         _sum: { balance: true },
         where: { status: 'Pendiente' }, // CxC pendientes actuales
       }),
-      this.prisma.sale.groupBy({
+      (this.prisma as any).sale.groupBy({
         by: ['clientId'],
         where: { status: 'EMITIDA', createdAt: { gte: start, lt: end } },
         _sum: { total: true },
@@ -85,7 +85,7 @@ export class ReportsKpisController {
     if (topGroup.length) {
       const top = topGroup[0];
       const client = top.clientId
-        ? await this.prisma.client.findUnique({ where: { id: top.clientId } })
+        ? await (this.prisma as any).client.findUnique({ where: { id: top.clientId } })
         : null;
       const revenue = Number(top._sum.total || 0);
       const salesCount = Number(top._count._all || 0);

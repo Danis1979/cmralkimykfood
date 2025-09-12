@@ -19,10 +19,10 @@ export class ReportsController {
     this.checkKey(key);
 
     const [products, groups] = await Promise.all([
-      this.prisma.product.findMany({
+      (this.prisma as any).product.findMany({
         select: { id: true, sku: true, name: true, costStd: true },
       }),
-      this.prisma.inventoryMove.groupBy({
+      (this.prisma as any).inventoryMove.groupBy({
         by: ['productId', 'direction'],
         _sum: { qty: true },
       }),

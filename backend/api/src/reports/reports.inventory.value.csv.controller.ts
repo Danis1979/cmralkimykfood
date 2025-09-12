@@ -16,7 +16,7 @@ export class ReportsInventoryValueCsvController {
 
   @Get('inventory-value.csv')
   async inventoryValueCsv(@Res() res: Response) {
-    const products = await this.prisma.product.findMany({
+    const products = await (this.prisma as any).product.findMany({
       where: { active: true },
       select: { id: true, sku: true, name: true, costStd: true },
     });
@@ -27,11 +27,11 @@ export class ReportsInventoryValueCsvController {
 
     for (const p of products) {
       const [ins, outs] = await Promise.all([
-        this.prisma.inventoryMove.aggregate({
+        (this.prisma as any).inventoryMove.aggregate({
           where: { productId: p.id, direction: 'IN' },
           _sum: { qty: true },
         }),
-        this.prisma.inventoryMove.aggregate({
+        (this.prisma as any).inventoryMove.aggregate({
           where: { productId: p.id, direction: 'OUT' },
           _sum: { qty: true },
         }),

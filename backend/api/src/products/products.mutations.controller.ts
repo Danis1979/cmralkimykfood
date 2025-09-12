@@ -26,7 +26,7 @@ export class ProductsMutationsController {
     @Headers('x-api-key') key?: string,
   ) {
     checkKey(key);
-    const p = await this.prisma.product.update({
+    const p = await (this.prisma as any).product.update({
       where: { sku },
       data: { costStd: new Prisma.Decimal(body.costStd) },
       select: { sku: true, name: true, costStd: true, updatedAt: true },

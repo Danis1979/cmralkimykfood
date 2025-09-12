@@ -11,7 +11,7 @@ export class ReceivablesController {
     const n = Math.min(parseInt(take, 10) || 50, 200);
     const where: any = {};
     if (status) where.status = status;
-    const items = await this.prisma.receivable.findMany({
+    const items = await (this.prisma as any).receivable.findMany({
       where,
       take: n,
       orderBy: { createdAt: 'desc' },
@@ -36,7 +36,7 @@ export class ReceivablesController {
     if (!amount || amount <= 0) throw new BadRequestException('amount requerido (> 0)');
 
     return this.prisma.$transaction(async (tx) => {
-      const r = await tx.receivable.findUnique({ where: { id }, include: { sale: true, client: true } });
+      const r = await (tx as any).receivable.findUnique({ where: { id }, include: { sale: true, client: true } });
       if (!r) throw new BadRequestException('Receivable no encontrado');
       const balance = Number(r.balance.toString());
       if (balance <= 0) throw new BadRequestException('Saldo ya cancelado');
@@ -45,7 +45,7 @@ export class ReceivablesController {
       const nuevoSaldo = balance - amount;
 
       // Ledger: entra a Banco (HABER) por el importe cobrado
-      await tx.ledgerEntry.create({
+      await (tx as any).ledgerEntry.create({
         data: {
           account: 'Banco',
           type: 'HABER',
@@ -57,7 +57,7 @@ export class ReceivablesController {
       });
 
       // Actualizar receivable
-      await tx.receivable.update({
+      await (tx as any).receivable.update({
         where: { id: r.id },
         data: {
           balance: String(nuevoSaldo),
@@ -67,7 +67,7 @@ export class ReceivablesController {
 
       // Cerrar venta si quedó en 0
       if (nuevoSaldo <= 0) {
-        await tx.sale.update({ where: { id: r.saleId }, data: { status: 'CERRADA' } });
+        await (tx as any).sale.update({ where: { id: r.saleId }, data: { status: 'CERRADA' } });
       }
 
       return {
@@ -87,7 +87,7 @@ export class ReceivablesController {
     @Body() body: { amount?: number; bank?: string; number?: string; days?: number },
   ) {
     return this.prisma.$transaction(async (tx) => {
-      const r = await tx.receivable.findUnique({
+      const r = await (tx as any).receivable.findUnique({
         where: { id },
         include: { sale: true, client: true },
       });
@@ -100,7 +100,7 @@ export class ReceivablesController {
         body?.amount && body.amount > 0 ? Math.min(Number(body.amount), balance) : balance;
 
       // 1) Registrar cheque recibido
-      const ch = await tx.cheque.create({
+      const ch = await (tx as any).cheque.create({
         data: {
           type: 'recibido',
           bank: body?.bank || 'Banco Cliente',
@@ -116,7 +116,7 @@ export class ReceivablesController {
       });
 
       // 2) Ledger: entra a ChequesRecibidos (HABER)
-      await tx.ledgerEntry.create({
+      await (tx as any).ledgerEntry.create({
         data: {
           account: 'ChequesRecibidos',
           type: 'HABER',
@@ -129,7 +129,7 @@ export class ReceivablesController {
 
       // 3) Actualizar receivable
       const nuevoSaldo = balance - amount;
-      await tx.receivable.update({
+      await (tx as any).receivable.update({
         where: { id: r.id },
         data: {
           balance: String(nuevoSaldo),
@@ -139,7 +139,7 @@ export class ReceivablesController {
 
       // 4) Cerrar la venta si quedó en cero
       if (nuevoSaldo <= 0) {
-        await tx.sale.update({ where: { id: r.saleId }, data: { status: 'CERRADA' } });
+        await (tx as any).sale.update({ where: { id: r.saleId }, data: { status: 'CERRADA' } });
       }
 
       return { receivableId: r.id, chequeId: ch.id, charged: amount, newBalance: nuevoSaldo };

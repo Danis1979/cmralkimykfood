@@ -10,7 +10,7 @@ export class OrdersController {
   @Get()
   async list(@Query('take') take = '50') {
     const n = Math.min(parseInt(take, 10) || 50, 200);
-    const orders = await this.prisma.order.findMany({
+    const orders = await (this.prisma as any).order.findMany({
       take: n,
       orderBy: { createdAt: 'desc' },
       include: { items: { include: { product: true } } },
@@ -28,7 +28,7 @@ export class OrdersController {
 
   @Get(':id')
   async get(@Param('id') id: string) {
-    const o = await this.prisma.order.findUnique({
+    const o = await (this.prisma as any).order.findUnique({
       where: { id },
       include: { items: { include: { product: true } } },
     });
@@ -51,7 +51,7 @@ export class OrdersController {
 
     // Resolver productos por SKU
     const skus = [...new Set(body.items.map(i => i.sku))];
-    const products = await this.prisma.product.findMany({ where: { sku: { in: skus } } });
+    const products = await (this.prisma as any).product.findMany({ where: { sku: { in: skus } } });
     if (products.length !== skus.length) {
       const found = new Set(products.map(p => p.sku));
       const missing = skus.filter(s => !found.has(s));
@@ -59,7 +59,7 @@ export class OrdersController {
     }
     const bySku = Object.fromEntries(products.map(p => [p.sku, p]));
 
-    const order = await this.prisma.order.create({
+    const order = await (this.prisma as any).order.create({
       data: {
         clientId,
         status: 'BORRADOR',
@@ -85,14 +85,14 @@ export class OrdersController {
   // CONFIRMADO → crea reservas si hay disponible suficiente
   @Post(':id/confirm')
   async confirm(@Param('id') id: string, @Body() body?: { ttlHours?: number }) {
-    const order = await this.prisma.order.findUnique({
+    const order = await (this.prisma as any).order.findUnique({
       where: { id },
       include: { items: true },
     });
     if (!order) throw new NotFoundException('Pedido no encontrado');
     if (order.status !== 'BORRADOR') throw new BadRequestException(`Solo BORRADOR puede confirmarse (actual=${order.status})`);
 
-    const products = await this.prisma.product.findMany({ where: { id: { in: order.items.map(i => i.productId) } } });
+    const products = await (this.prisma as any).product.findMany({ where: { id: { in: order.items.map(i => i.productId) } } });
     const ttlMs = ((body?.ttlHours ?? 72) | 0) * 60 * 60 * 1000;
     const expiresAt = new Date(Date.now() + ttlMs);
 
@@ -110,7 +110,7 @@ export class OrdersController {
     // Crear reservas y confirmar
     await this.prisma.$transaction(async (tx) => {
       for (const it of order.items) {
-        await tx.stockReservation.create({
+        await (tx as any).stockReservation.create({
           data: {
             orderId: order.id,
             productId: it.productId,
@@ -120,7 +120,7 @@ export class OrdersController {
           },
         });
       }
-      await tx.order.update({ where: { id: order.id }, data: { status: 'CONFIRMADO' } });
+      await (tx as any).order.update({ where: { id: order.id }, data: { status: 'CONFIRMADO' } });
     });
 
     // Resumen
@@ -137,21 +137,21 @@ export class OrdersController {
   private async resolveClientId(clientId?: string, clientEmail?: string) {
     if (clientId) return clientId;
     if (!clientEmail) throw new BadRequestException('Proveé clientId o clientEmail');
-    const c = await this.prisma.client.findFirst({ where: { email: clientEmail } });
+    const c = await (this.prisma as any).client.findFirst({ where: { email: clientEmail } });
     if (!c) throw new BadRequestException('Cliente no encontrado (por email)');
     return c.id;
   }
 
   private async getOnHand(productId: string) {
     const [inAgg, outAgg] = await Promise.all([
-      this.prisma.inventoryMove.aggregate({ where: { productId, direction: 'IN' }, _sum: { qty: true } }),
-      this.prisma.inventoryMove.aggregate({ where: { productId, direction: 'OUT' }, _sum: { qty: true } }),
+      (this.prisma as any).inventoryMove.aggregate({ where: { productId, direction: 'IN' }, _sum: { qty: true } }),
+      (this.prisma as any).inventoryMove.aggregate({ where: { productId, direction: 'OUT' }, _sum: { qty: true } }),
     ]);
     return (inAgg._sum.qty ?? 0) - (outAgg._sum.qty ?? 0);
   }
 
   private async getReserved(productId: string) {
-    const agg = await this.prisma.stockReservation.aggregate({
+    const agg = await (this.prisma as any).stockReservation.aggregate({
       where: { productId, status: 'ACTIVA' },
       _sum: { qty: true },
     });

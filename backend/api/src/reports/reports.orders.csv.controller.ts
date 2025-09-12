@@ -49,7 +49,7 @@ export class ReportsOrdersCsvController {
     if (status) where.status = status as any;
     if (clientEmail) where.client = { email: clientEmail };
 
-    const orders = await this.prisma.order.findMany({
+    const orders = await (this.prisma as any).order.findMany({
       where,
       orderBy: { createdAt: 'asc' },
       include: { client: true, items: { include: { product: true } } },

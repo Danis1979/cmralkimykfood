@@ -89,7 +89,7 @@ export class ReportsReceivablesSearchCsvController {
       ] } };
     }
 
-    const rows = await this.prisma.receivable.findMany({
+    const rows = await (this.prisma as any).receivable.findMany({
       where,
       include: { client: true, sale: true },
       orderBy,

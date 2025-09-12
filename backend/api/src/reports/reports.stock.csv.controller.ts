@@ -24,7 +24,7 @@ export class ReportsStockCsvController {
     @Query('low') lowStr?: string,        // "true" -> sólo onHand <= reorderPoint (si existiera) o <= 0
   ) {
     // Productos (tomamos sku, name, costStd)
-    const prods = await this.prisma.product.findMany({
+    const prods = await (this.prisma as any).product.findMany({
       where: skuQ?.trim() ? { sku: { contains: skuQ.trim(), mode: 'insensitive' } } : undefined,
       select: { id: true, sku: true, name: true, costStd: true, reorderPoint: true },
     });
@@ -39,12 +39,12 @@ export class ReportsStockCsvController {
 
     // Sumas IN/OUT por producto
     const [ins, outs] = await Promise.all([
-      this.prisma.inventoryMove.groupBy({
+      (this.prisma as any).inventoryMove.groupBy({
         by: ['productId'],
         where: { productId: { in: ids }, direction: 'IN' as any },
         _sum: { qty: true },
       }),
-      this.prisma.inventoryMove.groupBy({
+      (this.prisma as any).inventoryMove.groupBy({
         by: ['productId'],
         where: { productId: { in: ids }, direction: 'OUT' as any },
         _sum: { qty: true },

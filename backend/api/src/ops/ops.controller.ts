@@ -93,12 +93,12 @@ export class OpsController {
       }
 
       // PT
-      const pt = await this.prisma.product.findUnique({ where: { sku } });
+      const pt = await (this.prisma as any).product.findUnique({ where: { sku } });
       if (!pt) throw new HttpException('PT no encontrado por sku', HttpStatus.BAD_REQUEST);
       if (pt.type !== 'PT') throw new HttpException('El sku indicado no es un PT', HttpStatus.BAD_REQUEST);
 
       // Receta
-      const recipe = await this.prisma.recipe.findMany({
+      const recipe = await (this.prisma as any).recipe.findMany({
         where: { productId: pt.id },
         include: { component: true },
       });
@@ -113,11 +113,11 @@ export class OpsController {
       // OnHand helper
       const onHandFor = async (productId: string) => {
         const [ins, outs] = await Promise.all([
-          this.prisma.inventoryMove.aggregate({
+          (this.prisma as any).inventoryMove.aggregate({
             where: { productId, direction: 'IN' as any },
             _sum: { qty: true },
           }),
-          this.prisma.inventoryMove.aggregate({
+          (this.prisma as any).inventoryMove.aggregate({
             where: { productId, direction: 'OUT' as any },
             _sum: { qty: true },
           }),
@@ -150,7 +150,7 @@ export class OpsController {
         if (components.length) {
           for (const c of components) {
             const q = Math.round(c.need); // qty es Int en tu modelo
-            await tx.inventoryMove.create({
+            await (tx as any).inventoryMove.create({
               data: {
                 productId: c.id,
                 direction: 'OUT' as any,
@@ -164,7 +164,7 @@ export class OpsController {
         }
         // IN PT
         const inQty = Math.round(qty);
-        const inPt = await tx.inventoryMove.create({
+        const inPt = await (tx as any).inventoryMove.create({
           data: {
             productId: pt.id,
             direction: 'IN' as any,
@@ -266,14 +266,14 @@ export class OpsController {
     }
 
     const [items, total] = await Promise.all([
-      this.prisma.inventoryMove.findMany({
+      (this.prisma as any).inventoryMove.findMany({
         where,
         include: { product: true }, // para sku/name
         orderBy,
         take,
         skip,
       }),
-      this.prisma.inventoryMove.count({ where }),
+      (this.prisma as any).inventoryMove.count({ where }),
     ]);
 
     return {

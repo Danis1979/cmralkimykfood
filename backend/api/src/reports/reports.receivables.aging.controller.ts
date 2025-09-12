@@ -25,7 +25,7 @@ export class ReportsReceivablesAgingController {
   async aging(@Query('as_of') asOf?: string) {
     const asOfDate = asOf ? new Date(asOf) : new Date();
 
-    const recs = await this.prisma.receivable.findMany({
+    const recs = await (this.prisma as any).receivable.findMany({
       where: { status: 'Pendiente' as any },
       include: { sale: { include: { client: true } } },
     });

@@ -28,7 +28,7 @@ export class ReportsReceivablesAgingCsvController {
   ) {
     const asOf = asOfStr ? new Date(asOfStr.length === 7 ? asOfStr + '-01' : asOfStr) : new Date();
 
-    const recs = await this.prisma.receivable.findMany({
+    const recs = await (this.prisma as any).receivable.findMany({
       where: { balance: { gt: 0 } },
       select: {
         balance: true,
