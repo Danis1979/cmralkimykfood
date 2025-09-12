@@ -42,6 +42,12 @@ function parseRange(from?: string, to?: string): Range {
 export class ReportsKpisController {
   constructor(private readonly prisma: PrismaService) {}
 
+  // Firma para verificar que el deploy tomó este archivo
+  @Get('_kpis_signature')
+  sig() {
+    return { signature: 'kpis-v2-resilient-guards' };
+  }
+
   // Debug: ver delegates disponibles en runtime
   @Get('_debug_delegates')
   getDelegates() {
@@ -61,9 +67,9 @@ export class ReportsKpisController {
     const p: any = this.prisma;
 
     // Delegates dinámicos según existan en runtime (Render)
-    const sale       = p.sale || p.Sale || p.ventas || p.Ventas;             // "Sale" -> delegate "sale"
+    const sale       = p.sale || p.Sale || p.ventas || p.Ventas;             // "Sale" -> delegate "sale"/"Sale"
     const compras    = p.purchase || p.compras || p.Purchase || p.Compras;   // "compras" (si existe)
-    const preciosIng = p.precios_ingredientes || p.PreciosIngredientes;      // "precios_ingredientes" (si existe)
+    const preciosIng = p.precios_ingredientes || p.PreciosIngredientes;      // (si existe)
     const receivable = p.receivable || p.Receivable || p.cxc;                // puede NO existir
 
     // --- Ventas ---
