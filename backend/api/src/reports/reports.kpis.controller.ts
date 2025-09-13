@@ -92,27 +92,27 @@ export class ReportsKpisController {
     } catch { sales = 0; }
 
     // --- Compras (fallback por cantidades*precio_unitario) ---
-    let purchases = 0;
-    try {
-      if (compras?.groupBy && preciosIng?.findMany) {
-        const groups = await compras.groupBy({
-          by: ['ingrediente'],
-          where: { fecha_pago: { gte: start, lt: end } },
-          _sum: { cantidad: true },
-        });
-        const precios = await preciosIng.findMany();
-        const priceMap = new Map(
-          precios.map((r: any) => [r.ingrediente, Number(r.precio_unitario || 0)])
-        );
-        for (const g of groups) {
-          const qty = Number(g?._sum?.cantidad || 0);
-          const pu = priceMap.get(g.ingrediente);
-          if (pu) purchases += qty * pu;
-        }
-      }
-    } catch { purchases = 0; }
+let purchases: number = 0;
+try {
+  if (compras?.groupBy && preciosIng?.findMany) {
+    const groups = await compras.groupBy({
+      by: ['ingrediente'],
+      where: { fecha_pago: { gte: start, lt: end } },
+      _sum: { cantidad: true },
+    });
+    const precios = await preciosIng.findMany();
+    const priceMap: Map<any, number> = new Map(
+      precios.map((r: any) => [r.ingrediente, Number(r.precio_unitario ?? 0)])
+    );
+    for (const g of groups) {
+      const qty = Number(g?._sum?.cantidad ?? 0);
+      const puNum = Number(priceMap.get(g.ingrediente) ?? 0);
+      purchases += qty * puNum;
+    }
+  }
+} catch { purchases = 0; }
 
-    // --- CxC pendientes (si no hay modelo, lo dejamos en 0) ---
+// --- CxC pendientes (si no hay modelo, lo dejamos en 0) ---
     let receivablesPending = 0;
     try {
       if (receivable?.aggregate) {
