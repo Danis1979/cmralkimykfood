@@ -42,7 +42,7 @@ function parseRange(from?: string, to?: string): Range {
 export class ReportsKpisController {
   constructor(private readonly prisma: PrismaService) {}
 
-  // Firma para verificar que el deploy tomó este archivo
+  // Firma de verificación del deploy
   @Get('_kpis_signature')
   sig() {
     return { signature: 'kpis-v2-resilient-guards' };
@@ -67,16 +67,16 @@ export class ReportsKpisController {
     const p: any = this.prisma;
 
     // Delegates dinámicos según existan en runtime (Render)
-    const sale       = p.sale || p.Sale || p.ventas || p.Ventas;             // "Sale" -> delegate "sale"/"Sale"
-    const compras    = p.purchase || p.compras || p.Purchase || p.Compras;   // "compras" (si existe)
-    const preciosIng = p.precios_ingredientes || p.PreciosIngredientes;      // (si existe)
-    const receivable = p.receivable || p.Receivable || p.cxc;                // puede NO existir
+    const sale       = p.sale || p.Sale || p.ventas || p.Ventas;             // ventas
+    const compras    = p.purchase || p.compras || p.Purchase || p.Compras;   // compras
+    const preciosIng = p.precios_ingredientes || p.PreciosIngredientes;      // precios ingredientes
+    const receivable = p.receivable || p.Receivable || p.cxc;                // cxc
 
     // --- Ventas ---
     let sales = 0;
     try {
       if (sale?.aggregate) {
-        // En Render "Sale" tiene campo "date"
+        // En Render "Sale" tiene columna "date"
         const where = (sale === p.Sale || sale === p.sale)
           ? { date: { gte: start, lt: end } }
           : { createdAt: { gte: start, lt: end } };
@@ -92,7 +92,7 @@ export class ReportsKpisController {
       }
     } catch { sales = 0; }
 
-    // --- Compras (fallback por ingredientes * precio_unitario) ---
+    // --- Compras (fallback: suma de cantidades * precio_unitario) ---
     let purchases = 0;
     try {
       if (compras?.groupBy && preciosIng?.findMany) {
@@ -113,7 +113,7 @@ export class ReportsKpisController {
       }
     } catch { purchases = 0; }
 
-    // --- CxC pendientes (si no hay modelo, se queda 0) ---
+    // --- CxC pendientes (si no hay modelo, se queda en 0) ---
     let receivablesPending = 0;
     try {
       if (receivable?.aggregate) {
@@ -125,7 +125,7 @@ export class ReportsKpisController {
       }
     } catch { receivablesPending = 0; }
 
-    // --- Top client por ventas (Render: "Sale.client") ---
+    // --- Top client (Render: "Sale.client") ---
     let topClient: any = null;
     try {
       if (sale?.groupBy) {
