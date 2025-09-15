@@ -1,116 +1,94 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import { ApiQuery, ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma.service';
 
+@ApiTags('reports')
 @Controller('reports')
 export class ReportsSalesMonthlyController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) {}
 
-  private parseYm(s?: string): Date | null {
-    if (!s) return null;
-    const m = s.match(/^(\d{4})-(\d{2})$/);
-    if (!m) return null;
-    const y = Number(m[1]), mo = Number(m[2]);
-    if (mo < 1 || mo > 12) return null;
-    return new Date(Date.UTC(y, mo - 1, 1));
+  private monthStartUTC(d: Date) {
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
   }
-
-  private addMonths(d: Date, n: number): Date {
+  private addMonthsUTC(d: Date, n: number) {
     return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1));
   }
-
-  private async detectDateKey(sale: any): Promise<string> {
-    const cands = ['date', 'fecha', 'issuedAt', 'createdAt', 'created_at'];
-    for (const k of cands) {
-      try {
-        const r = await sale.findFirst({
-          select: { [k]: true },
-          orderBy: { id: 'desc' } as any,
-        });
-        if (r && r[k] != null) return k;
-      } catch { /* ignore */ }
-    }
-    return 'date';
+  private parseYYYYMM(s?: string | null): Date | null {
+    if (!s) return null;
+    const m = /^(\d{4})-(\d{2})$/.exec(s);
+    if (!m) return null;
+    const y = Number(m[1]), mm = Number(m[2]);
+    if (mm < 1 || mm > 12) return null;
+    return new Date(Date.UTC(y, mm - 1, 1));
   }
 
   @Get('sales.monthly')
-  async monthly(
-    @Query('from') fromQ?: string,
-    @Query('to') toQ?: string,
-  ) {
-    const sale = (this.prisma as any).sale;
-    if (!sale) {
-      return {
-        range: { from: null, to: null },
-        series: [],
-        meta: { error: 'no_sale_delegate' },
-      };
-    }
+  @ApiQuery({ name: 'from', required: false, description: 'YYYY-MM (inclusive)' })
+  @ApiQuery({ name: 'to',   required: false, description: 'YYYY-MM (inclusive, se toma fin de mes)' })
+  async salesMonthly(@Query() qs: Record<string, any>) {
+    // Rango por defecto: últimos 6 meses (incluye el mes actual)
+    const now = new Date();
+    const base = this.monthStartUTC(now);
+    const fromQs = this.parseYYYYMM(qs.from as string);
+    const toQs   = this.parseYYYYMM(qs.to   as string);
 
-    // Rango: por defecto últimos 6 meses (cerrados)
-    let start = this.parseYm(fromQ);
-    let endInc = this.parseYm(toQ); // inclusive (fin de mes); luego lo pasamos a exclusivo
-    if (!start || !endInc) {
-      const now = new Date();
-      const firstThisMonth = new Date(Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        1,
-      ));
-      start = this.addMonths(firstThisMonth, -5);
-      endInc = firstThisMonth; // último mes incluido = mes actual
-    }
-    const endEx = this.addMonths(endInc, 1); // exclusivo para query
+    const start = fromQs ?? this.addMonthsUTC(base, -5);
+    const endEx = toQs ? this.addMonthsUTC(toQs, 1) : this.addMonthsUTC(base, 1);
 
-    // Campo de fecha (auto)
-    const dateKey = await this.detectDateKey(sale);
-
-    // Traer filas y agregar en memoria por YYYY-MM
-    let rows: any[] = [];
-    try {
-      rows = await sale.findMany({
-        where: { [dateKey]: { gte: start, lt: endEx } },
-        select: {
-          [dateKey]: true,
-          total: true,
-          net: true,
-          amount: true,
-          totalAmount: true,
-        },
-        orderBy: { [dateKey]: 'asc' } as any,
-        take: 5000,
-      });
-    } catch (e) {
-      return {
-        range: { from: start.toISOString(), to: endEx.toISOString() },
-        series: [],
-        meta: { error: 'query_failed', dateKey },
-      };
-    }
-
-    // Lista de meses del rango
+    // Construyo SIEMPRE el arreglo de meses YYYY-MM del rango
     const months: string[] = [];
-    for (let d = new Date(start); d < endEx; d = this.addMonths(d, 1)) {
+    for (let d = new Date(start); d < endEx; d = this.addMonthsUTC(d, 1)) {
       months.push(d.toISOString().slice(0, 7));
     }
 
-    // Acumulador por mes
-    const acc: Record<string, number> = {};
-    for (const m of months) acc[m] = 0;
+    // Detecto delegado sale/sales
+    const prismaAny: any = this.prisma as any;
+    const sale = prismaAny.sale ?? prismaAny.sales ?? null;
 
-    for (const r of rows) {
-      const dt = r[dateKey];
-      const iso = (dt instanceof Date ? dt : new Date(dt)).toISOString();
-      const ym = iso.slice(0, 7);
-      const val = Number(r.total ?? r.net ?? r.totalAmount ?? r.amount ?? 0);
-      if (Number.isFinite(val)) acc[ym] = (acc[ym] ?? 0) + val;
+    // Si no hay delegado, devuelvo los meses con 0
+    if (!sale) {
+      return {
+        range: { from: start.toISOString(), to: endEx.toISOString() },
+        series: months.map(m => ({ month: m, net: 0 })),
+        meta: { rows: 0, dateKey: null, error: 'delegate_sale_missing' },
+      };
     }
 
-    const series = months.map(m => ({ month: m, net: acc[m] || 0 }));
+    try {
+      // Detecto el campo de fecha real en runtime
+      const probe = await sale.findFirst({}); // 1 fila o null
+      const dateKeyCandidates = ['issuedAt', 'date', 'created_at', 'createdAt', 'fecha'];
+      const dateKey = dateKeyCandidates.find(k => probe && typeof probe[k] !== 'undefined') ?? 'date';
 
-    return {
-      range: { from: start.toISOString(), to: endEx.toISOString() },
-      series,
-      meta: { count: rows.length, dateKey },
-    };
+      // Traigo filas del rango (sin select, para evitar errores de tipos dinámicos)
+      const rows = await sale.findMany({
+        where: { [dateKey]: { gte: start, lt: endEx } } as any,
+      });
+
+      // Acumulo por YYYY-MM
+      const acc: Record<string, number> = {};
+      for (const r of rows) {
+        const dt = r?.[dateKey];
+        if (!dt) continue;
+        const iso = (dt instanceof Date ? dt : new Date(dt)).toISOString();
+        const ym = iso.slice(0, 7);
+        const val = Number(r?.net ?? r?.total ?? r?.totalAmount ?? r?.amount ?? 0);
+        if (Number.isFinite(val)) acc[ym] = (acc[ym] ?? 0) + val;
+      }
+
+      const series = months.map(m => ({ month: m, net: acc[m] || 0 }));
+      return {
+        range: { from: start.toISOString(), to: endEx.toISOString() },
+        series,
+        meta: { rows: rows.length, dateKey },
+      };
+    } catch (e: any) {
+      // Fallback seguro (no 500)
+      return {
+        range: { from: start.toISOString(), to: endEx.toISOString() },
+        series: months.map(m => ({ month: m, net: 0 })),
+        meta: { error: 'exception', message: String(e?.message || e) },
+      };
+    }
   }
 }
