@@ -43,7 +43,7 @@ import { ReportsStockCsvController } from './reports.stock.csv.controller';
     ReportsOrdersCsvController,
     ReportsProductionsCsvController,
     ReportsReceivablesSearchCsvController,
-    ReportsStockCsvController,, ReportsSalesMonthlyController],
+    ReportsStockCsvController,  ReportsSalesMonthlyController],
   providers: [PrismaService],
 })
 export class ReportsModule {}
