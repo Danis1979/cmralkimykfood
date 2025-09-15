@@ -26,48 +26,33 @@ export class ReportsSalesMonthlyController {
     return `COALESCE(${alias}."net", ${alias}."totalNet", ${alias}."total", 0)`;
   }
 
-  private monthBoundaries({ fromMonth, toMonth }: MonthRange) {
-    const wherePieces: string[] = [];
-    const d = this.buildDateExpr('o');
-    if (fromMonth) wherePieces.push(`${d} >= to_date($1,'YYYY-MM')`);
-    if (toMonth)   wherePieces.push(`${d} < (to_date($2,'YYYY-MM') + interval '1 month')`);
-    return { wherePieces, d };
-  }
-
   @Get('sales.monthly')
   async salesMonthly(@Query('from') from?: string, @Query('to') to?: string) {
     const mm = (s?: string) => (s && /^\d{4}-\d{2}$/.test(s) ? s : undefined);
     const fromMonth = mm(from);
     const toMonth   = mm(to);
 
-    const dateExpr = this.buildDateExpr('o');
+    const d = this.buildDateExpr('o');
     const net = this.buildNetExpr('o');
-    const { wherePieces, d } = this.monthBoundaries({ fromMonth, toMonth });
 
-    const whereCore = [
+    const where: string[] = [
       `(o."type" = 'sale' OR o."module" = 'sales' OR o."kind" = 'sale')`,
-      `${dateExpr} IS NOT NULL`,
-      ...wherePieces,
-    ].filter(Boolean);
-
-    const whereSql = whereCore.length ? `WHERE ${whereCore.join(' AND ')}` : '';
+      `${d} IS NOT NULL`,
+    ];
+    if (fromMonth) where.push(`${d} >= to_date('${fromMonth}','YYYY-MM')`);
+    if (toMonth)   where.push(`${d} < (to_date('${toMonth}','YYYY-MM') + interval '1 month')`);
 
     const sql = `
       SELECT 
         to_char(date_trunc('month', ${d}), 'YYYY-MM') AS month,
         SUM(${net})::numeric AS net
       FROM "Order" o
-      ${whereSql}
+      WHERE ${where.join(' AND ')}
       GROUP BY 1
       ORDER BY 1
     `;
 
-    const args: any[] = [];
-    if (fromMonth) args.push(fromMonth);
-    if (toMonth)   args.push(toMonth);
-
-    const rows = await this.prisma.$queryRawUnsafe<any[]>(sql, ...args);
-
+    const rows = await this.prisma.$queryRawUnsafe<any[]>(sql);
     return {
       range: { from: fromMonth ?? null, to: toMonth ?? null },
       series: rows.map(r => ({ month: r.month, net: Number(r.net) || 0 })),
