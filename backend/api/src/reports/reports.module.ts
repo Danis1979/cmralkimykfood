@@ -24,8 +24,7 @@ import { ReportsReceivablesSearchCsvController } from './reports.receivables.sea
 import { ReportsStockCsvController } from './reports.stock.csv.controller';
 
 @Module({
-  controllers: [
-    // JSON
+  controllers: [// JSON
     ReportsOverviewController,
     ReportsReceivablesAgingController,
     ReportsKpisController,
@@ -44,8 +43,7 @@ import { ReportsStockCsvController } from './reports.stock.csv.controller';
     ReportsOrdersCsvController,
     ReportsProductionsCsvController,
     ReportsReceivablesSearchCsvController,
-    ReportsStockCsvController,
-  ],
+    ReportsStockCsvController,, ReportsSalesMonthlyController],
   providers: [PrismaService],
 })
 export class ReportsModule {}
