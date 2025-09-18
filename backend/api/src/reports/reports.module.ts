@@ -46,6 +46,7 @@ import { ReportsStockCsvController } from './reports.stock.csv.controller';
     ReportsProductionsCsvController,
     ReportsReceivablesSearchCsvController,
     ReportsStockCsvController,  ReportsSalesMonthlyController,
+    ReportsReceivablesSummaryController,
     ReportsReceivablesSummaryController],
   providers: [PrismaService],
 })

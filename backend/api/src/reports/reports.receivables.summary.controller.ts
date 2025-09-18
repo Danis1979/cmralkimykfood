@@ -8,13 +8,13 @@ function mm(s?: string) {
 export class ReportsReceivablesSummaryController {
   @Get('receivables.summary')
   async summary(@Query('from') from?: string, @Query('to') to?: string) {
-    // Stub: estructura lista; luego sumamos de la tabla real
+    // Stub: estructura lista; completamos luego con datos reales
     return {
       range: { from: mm(from), to: mm(to) },
       paid: 0,
       pending: 0,
       overdue: 0,
-      _hint: 'stub',
+      _hint: 'stub'
     };
   }
 }
