@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "target": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowJs": true,
+    "esModuleInterop": true,
+    "types": ["vite/client"]
+  },
+  "include": ["src", "index.html"]
+}
