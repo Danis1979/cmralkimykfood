@@ -7,3 +7,6 @@ localhost.key
 
 frontend.broken.*
 
+
+frontend/
+frontend.broken.*
