@@ -5,15 +5,16 @@ import { PrismaService } from '../prisma.service';
 export class ReportsSalesMonthlyController {
   constructor(private readonly prisma: PrismaService) {}
 
-  // arma la expresión de fecha (soporta ISO en dateKey)
   private dateExpr(alias = 'o') {
+    // Casteamos SIEMPRE a timestamptz (sirve si la columna es timestamp/date/texto ISO)
     return `
       COALESCE(
-        ${alias}."date",
-        ${alias}."createdAt",
+        (${alias}."date")::timestamptz,
+        (${alias}."saleDate")::timestamptz,
+        (${alias}."createdAt")::timestamptz,
         CASE 
-          WHEN ${alias}."dateKey" ~ '^[0-9]{8}$' THEN to_date(${alias}."dateKey",'YYYYMMDD')
-          WHEN ${alias}."dateKey" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN ${alias}."dateKey"::date
+          WHEN ${alias}."dateKey" ~ '^[0-9]{8}$' THEN to_date(${alias}."dateKey",'YYYYMMDD')::timestamptz
+          WHEN ${alias}."dateKey" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN (${alias}."dateKey")::date::timestamptz
           WHEN ${alias}."dateKey" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' THEN (${alias}."dateKey")::timestamptz
           ELSE NULL
         END
@@ -21,21 +22,20 @@ export class ReportsSalesMonthlyController {
     `;
   }
 
-  // arma la expresión de importe (prioriza total, como /orders/search)
   private amountExpr(alias = 'o') {
+    // Casteamos a numeric por si vinieran como texto
     return `COALESCE(
-      ${alias}."total",
-      ${alias}."net",
-      ${alias}."totalNet",
-      ${alias}."grandTotal",
-      ${alias}."amount",
-      ${alias}."totalAmount",
-      ${alias}."subtotal",
+      (${alias}."total")::numeric,
+      (${alias}."net")::numeric,
+      (${alias}."totalNet")::numeric,
+      (${alias}."grandTotal")::numeric,
+      (${alias}."amount")::numeric,
+      (${alias}."totalAmount")::numeric,
+      (${alias}."subtotal")::numeric,
       0
     )`;
   }
 
-  // intenta consultar una tabla dada; si falla o no hay filas, devuelve []
   private async queryMonthlyForTable(table: string, fromMonth?: string, toMonth?: string) {
     const d = this.dateExpr('o');
     const amt = this.amountExpr('o');
@@ -57,7 +57,7 @@ export class ReportsSalesMonthlyController {
     try {
       const rows = await this.prisma.$queryRawUnsafe<any[]>(sql);
       return Array.isArray(rows) ? rows : [];
-    } catch (_) {
+    } catch {
       return [];
     }
   }
@@ -69,9 +69,9 @@ export class ReportsSalesMonthlyController {
     const toMonth   = mm(to);
 
     const candidates = [
-      '"Order"',   // Prisma por defecto con comillas
-      'orders',    // minúscula
-      '"Orders"',  // plural con comillas
+      '"Order"',
+      'orders',
+      '"Orders"',
       'orders_view',
       'v_orders',
     ];
