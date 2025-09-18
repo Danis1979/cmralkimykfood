@@ -12,7 +12,6 @@ export class ReportsSalesMonthlyController {
   }
 
   private async candidateTables(): Promise<Tbl[]> {
-    // 🔎 Buscamos en TODAS las schemas (excepto sistema) tablas/vistas con "order" o "sale" en el nombre
     const q = `
       SELECT table_schema AS schema, table_name AS name
       FROM information_schema.tables
@@ -22,13 +21,12 @@ export class ReportsSalesMonthlyController {
       ORDER BY table_schema, table_name
     `;
     const rows = await this.prisma.$queryRawUnsafe<any[]>(q);
-    // preferimos nombres típicos primero
-    const boost = (t:string) => (['Order','orders','sales','sale','Sales'].includes(t) ? 0 : 1);
+    const boost = (t:string) => (['Order','orders','Sale','sales'].includes(t) ? 0 : 1);
     const list = (rows ?? []).map(r => {
       const ref = `${this.quoteIdent(r.schema)}.${this.quoteIdent(r.name)}`;
       return { schema: r.schema, name: r.name, ref };
     }).sort((a,b)=> boost(a.name)-boost(b.name) || a.schema.localeCompare(b.schema) || a.name.localeCompare(b.name));
-    // fallback extras por si no aparecen (edge raro)
+    // extras por si acaso
     const extras: Tbl[] = [
       { schema:'public', name:'Order',  ref: `public."Order"` },
       { schema:'public', name:'orders', ref: `public.orders`  },
@@ -38,45 +36,52 @@ export class ReportsSalesMonthlyController {
     return list;
   }
 
-  private async existingCols(tbl: Tbl, cand: string[]): Promise<string[]> {
+  // Devuelve nombres de columnas **reales** (con su casing) que matcheen candidatos (case-insensitive)
+  private async pickCols(tbl: Tbl, candidates: string[]): Promise<string[]> {
     const q = `
-      SELECT lower(column_name) AS c
+      SELECT column_name, lower(column_name) AS lc
       FROM information_schema.columns
       WHERE table_schema=$1 AND table_name=$2
     `;
     const rows = await this.prisma.$queryRawUnsafe<any[]>(q, tbl.schema, tbl.name);
-    const have = new Set((rows??[]).map(r=>String(r.c)));
-    return cand.filter(c => have.has(c.toLowerCase()));
+    const byLc = new Map<string,string>();
+    for (const r of rows ?? []) byLc.set(String(r.lc), String(r.column_name));
+    const out: string[] = [];
+    for (const c of candidates) {
+      const orig = byLc.get(c.toLowerCase());
+      if (orig) out.push(orig);
+    }
+    return out;
   }
 
-  private buildDateExpr(alias: string, cols: string[]) {
+  private buildDateExpr(alias: string, colsReal: string[]) {
     const parts: string[] = [];
-    for (const c of cols) {
-      if (c === 'datekey') {
+    for (const orig of colsReal) {
+      const lc = orig.toLowerCase();
+      if (lc === 'datekey' || lc === 'date_key') {
         parts.push(`
           CASE 
-            WHEN ${alias}."dateKey" ~ '^[0-9]{8}$' THEN to_date(${alias}."dateKey",'YYYYMMDD')::timestamptz
-            WHEN ${alias}."dateKey" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN (${alias}."dateKey")::date::timestamptz
-            WHEN ${alias}."dateKey" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' THEN (${alias}."dateKey")::timestamptz
+            WHEN ${alias}."${orig}" ~ '^[0-9]{8}$' THEN to_date(${alias}."${orig}",'YYYYMMDD')::timestamptz
+            WHEN ${alias}."${orig}" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN (${alias}."${orig}")::date::timestamptz
+            WHEN ${alias}."${orig}" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' THEN (${alias}."${orig}")::timestamptz
             ELSE NULL
           END
         `);
       } else {
-        parts.push(`(${alias}."${c}")::timestamptz`);
+        parts.push(`(${alias}."${orig}")::timestamptz`);
       }
     }
-    if (parts.length === 0) return 'NULL';
-    return `COALESCE(${parts.join(',')})`;
+    return parts.length ? `COALESCE(${parts.join(',')})` : 'NULL';
   }
 
-  private buildAmountExpr(alias: string, cols: string[]) {
-    const casts = cols.map(c => `(${alias}."${c}")::numeric`);
+  private buildAmountExpr(alias: string, colsReal: string[]) {
+    const casts = colsReal.map(orig => `(${alias}."${orig}")::numeric`);
     return casts.length ? `COALESCE(${casts.join(',')},0)` : '0';
   }
 
   private async tryMonthly(tbl: Tbl, fromMonth?: string, toMonth?: string) {
-    const dcols = await this.existingCols(tbl, ['date','saledate','createdat','datekey','fecha']);
-    const acols = await this.existingCols(tbl, ['total','net','totalnet','grandtotal','amount','totalamount','subtotal']);
+    const dcols = await this.pickCols(tbl, ['date','saleDate','createdAt','dateKey','fecha']);
+    const acols = await this.pickCols(tbl, ['total','net','totalNet','grandTotal','amount','totalAmount','subtotal']);
     if (!dcols.length || !acols.length) return { rows: [], meta: { tbl, dcols, acols } };
 
     const d = this.buildDateExpr('o', dcols);
@@ -97,7 +102,7 @@ export class ReportsSalesMonthlyController {
     try {
       const rows = await this.prisma.$queryRawUnsafe<any[]>(sql);
       return { rows: Array.isArray(rows) ? rows : [], meta: { tbl, dcols, acols } };
-    } catch {
+    } catch (e) {
       return { rows: [], meta: { tbl, dcols, acols, error: 'query_failed' } };
     }
   }
@@ -114,7 +119,7 @@ export class ReportsSalesMonthlyController {
 
     const tables = await this.candidateTables();
     const tried: any[] = [];
-    let picked: any = null;
+    let picked: string | null = null;
     let rows: any[] = [];
 
     for (const t of tables) {
