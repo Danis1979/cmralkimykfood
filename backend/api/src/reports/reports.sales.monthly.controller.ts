@@ -13,7 +13,7 @@ export class ReportsSalesMonthlyController {
     const toMonth   = mm(to);
 
     // ⚠️ si tu tabla real es `"Order"` (con comillas), cambiala acá:
-    const TABLE = 'orders'; // o '"Order"'
+    const TABLE = '"Order"';
 
     // fecha: date ISO, createdAt o dateKey en distintos formatos
     const d = `
