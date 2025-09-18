@@ -1,5 +1,3 @@
-import { ReportsDebugController } from "./reports.debug.controller";
-import { ReportsSalesMonthlyController } from './reports.sales.monthly.controller';
 // backend/api/src/reports/reports.module.ts
 import { Module } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
@@ -25,8 +23,13 @@ import { ReportsProductionsCsvController } from './reports.productions.csv.contr
 import { ReportsReceivablesSearchCsvController } from './reports.receivables.search.csv.controller';
 import { ReportsStockCsvController } from './reports.stock.csv.controller';
 
+// Extras (JSON)
+import { ReportsSalesMonthlyController } from './reports.sales.monthly.controller';
+import { ReportsReceivablesSummaryController } from './reports.receivables.summary.controller';
+
 @Module({
-  controllers: [// JSON
+  controllers: [
+    // JSON
     ReportsOverviewController,
     ReportsReceivablesAgingController,
     ReportsKpisController,
@@ -45,8 +48,12 @@ import { ReportsStockCsvController } from './reports.stock.csv.controller';
     ReportsOrdersCsvController,
     ReportsProductionsCsvController,
     ReportsReceivablesSearchCsvController,
-    ReportsStockCsvController,  ReportsSalesMonthlyController,
+    ReportsStockCsvController,
+
+    // Extra (JSON)
+    ReportsSalesMonthlyController,
     ReportsReceivablesSummaryController,
+  ],
   providers: [PrismaService],
 })
 export class ReportsModule {}
