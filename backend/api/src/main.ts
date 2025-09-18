@@ -6,6 +6,19 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors({
+    origin: true,
+    methods: 'GET,HEAD,OPTIONS',
+    exposedHeaders: ['Content-Length', 'Last-Modified', 'Content-Disposition'],
+  });
+  
+  // Garantiza Last-Modified en el CSV (sirve para GET y HEAD)
+  app.use('/reports/stock.csv', (req, res, next) => {
+    if (!res.getHeader('Last-Modified')) {
+      res.setHeader('Last-Modified', new Date().toUTCString());
+    }
+    next();
+  });
+  app.enableCors({
   origin: [
     /^https?:\/\/localhost:3001$/,
     /^https?:\/\/alkimyk-front\.onrender\.com$/

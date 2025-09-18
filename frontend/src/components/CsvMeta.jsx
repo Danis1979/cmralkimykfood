@@ -19,9 +19,8 @@ export default function CsvMeta(){
     try{
       const API = import.meta.env.VITE_API_BASE_URL || '';
       const res = await fetch(`${API}/reports/stock.csv`, { method:'HEAD' });
-      // Nota: para poder LEER estos headers desde el browser, el back debe exponerlos (ver receta B).
-      const size = res.headers.get('content-length');
-      const last = res.headers.get('last-modified');
+      const size = res.headers.get('content-length');   // requiere Expose-Headers
+      const last = res.headers.get('last-modified');    // simple header
       setMeta({ size: size? Number(size): null, last });
     }catch(e){ setMeta({ size:null, last:null }); }
   })(); }, []);
