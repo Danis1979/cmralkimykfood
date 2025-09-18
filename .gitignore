@@ -4,3 +4,6 @@ dist/
 localhost.crt
 localhost.key
 *.bak.*
+
+frontend.broken.*
+
