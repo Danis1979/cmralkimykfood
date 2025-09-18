@@ -5,32 +5,40 @@ import { PrismaService } from '../prisma.service';
 export class ReportsSalesMonthlyController {
   constructor(private readonly prisma: PrismaService) {}
 
-  @Get('sales.monthly')
-  async salesMonthly(@Query('from') from?: string, @Query('to') to?: string) {
-    // Validamos YYYY-MM para evitar inyección
-    const mm = (s?: string) => (s && /^\d{4}-\d{2}$/.test(s) ? s : undefined);
-    const fromMonth = mm(from);
-    const toMonth   = mm(to);
-
-    // ⚠️ si tu tabla real es `"Order"` (con comillas), cambiala acá:
-    const TABLE = '"Order"';
-
-    // fecha: date ISO, createdAt o dateKey en distintos formatos
-    const d = `
+  // arma la expresión de fecha (soporta ISO en dateKey)
+  private dateExpr(alias = 'o') {
+    return `
       COALESCE(
-        o."date",
-        o."createdAt",
+        ${alias}."date",
+        ${alias}."createdAt",
         CASE 
-          WHEN o."dateKey" ~ '^[0-9]{8}$' THEN to_date(o."dateKey",'YYYYMMDD')
-          WHEN o."dateKey" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN o."dateKey"::date
-          WHEN o."dateKey" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' THEN (o."dateKey")::timestamptz
+          WHEN ${alias}."dateKey" ~ '^[0-9]{8}$' THEN to_date(${alias}."dateKey",'YYYYMMDD')
+          WHEN ${alias}."dateKey" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN ${alias}."dateKey"::date
+          WHEN ${alias}."dateKey" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' THEN (${alias}."dateKey")::timestamptz
           ELSE NULL
         END
       )
     `;
+  }
 
-    // monto: priorizamos "total" que ya vemos en /orders/search
-    const net = `COALESCE(o."total", o."net", o."totalNet", o."grandTotal", o."amount", o."totalAmount", o."subtotal", 0)`;
+  // arma la expresión de importe (prioriza total, como /orders/search)
+  private amountExpr(alias = 'o') {
+    return `COALESCE(
+      ${alias}."total",
+      ${alias}."net",
+      ${alias}."totalNet",
+      ${alias}."grandTotal",
+      ${alias}."amount",
+      ${alias}."totalAmount",
+      ${alias}."subtotal",
+      0
+    )`;
+  }
+
+  // intenta consultar una tabla dada; si falla o no hay filas, devuelve []
+  private async queryMonthlyForTable(table: string, fromMonth?: string, toMonth?: string) {
+    const d = this.dateExpr('o');
+    const amt = this.amountExpr('o');
 
     const where: string[] = [`${d} IS NOT NULL`];
     if (fromMonth) where.push(`${d} >= to_date('${fromMonth}','YYYY-MM')`);
@@ -39,14 +47,41 @@ export class ReportsSalesMonthlyController {
     const sql = `
       SELECT 
         to_char(date_trunc('month', ${d}), 'YYYY-MM') AS month,
-        SUM(${net})::numeric AS net
-      FROM ${TABLE} o
+        SUM(${amt})::numeric AS net
+      FROM ${table} o
       WHERE ${where.join(' AND ')}
       GROUP BY 1
       ORDER BY 1
     `;
 
-    const rows = await this.prisma.$queryRawUnsafe<any[]>(sql);
+    try {
+      const rows = await this.prisma.$queryRawUnsafe<any[]>(sql);
+      return Array.isArray(rows) ? rows : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  @Get('sales.monthly')
+  async salesMonthly(@Query('from') from?: string, @Query('to') to?: string) {
+    const mm = (s?: string) => (s && /^\d{4}-\d{2}$/.test(s) ? s : undefined);
+    const fromMonth = mm(from);
+    const toMonth   = mm(to);
+
+    const candidates = [
+      '"Order"',   // Prisma por defecto con comillas
+      'orders',    // minúscula
+      '"Orders"',  // plural con comillas
+      'orders_view',
+      'v_orders',
+    ];
+
+    let rows: any[] = [];
+    for (const table of candidates) {
+      rows = await this.queryMonthlyForTable(table, fromMonth, toMonth);
+      if (rows.length > 0) break;
+    }
+
     return {
       range: { from: fromMonth ?? null, to: toMonth ?? null },
       series: rows.map(r => ({ month: r.month, net: Number(r.net) || 0 })),
