@@ -1,3 +1,4 @@
+import { ReportsDebugController } from "./reports.debug.controller";
 import { ReportsSalesMonthlyController } from './reports.sales.monthly.controller';
 // backend/api/src/reports/reports.module.ts
 import { Module } from '@nestjs/common';
