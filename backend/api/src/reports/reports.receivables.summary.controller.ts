@@ -1,23 +1,31 @@
+// backend/api/src/reports/reports.receivables.summary.controller.ts
 import { Controller, Get, Query } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 
-function mm(dt?: Date | string | null) {
-  if (!dt) return null;
-  const d = new Date(dt as any);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2,'0')}`;
+type Pick = {
+  table: string;
+  dateCols: string[];    // fecha o vencimiento
+  amountCols: string[];  // saldo / importe
+  statusCols: string[];  // estado (opcional)
+};
+
+const CANDIDATES: Pick[] = [
+  { table: 'cmr."Receivable"', dateCols: ['due','vence','date','createdAt','createdat'], amountCols: ['balance','saldo','amount','importe','total'], statusCols: ['status','estado'] },
+  { table: 'crm."Receivable"', dateCols: ['due','vence','date','createdAt','createdat'], amountCols: ['balance','saldo','amount','importe','total'], statusCols: ['status','estado'] },
+  { table: 'public.receivables', dateCols: ['due','vence','date','createdAt','createdat'], amountCols: ['balance','saldo','amount','importe','total'], statusCols: ['status','estado'] },
+];
+
+function monthStart(ym?: string|null) {
+  if (!ym) return null;
+  // ym = "YYYY-MM"
+  const [y,m] = ym.split('-').map(Number);
+  return new Date(Date.UTC(y, m-1, 1));
 }
-function monthRange(from?: string | null, to?: string | null) {
-  // start = primer día del mes "from" o 6 meses atrás
-  // end = primer día del mes siguiente a "to" o mes siguiente al actual (rango half-open [start, end))
-  const now = new Date();
-  const start = from
-    ? new Date(`${from}-01T00:00:00.000Z`)
-    : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1));
-  const end = to
-    ? new Date(Date.UTC(
-        Number(to.slice(0,4)), Number(to.slice(5,7)) - 1 + 1, 1))
-    : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-  return { start, end, from: mm(start), to: mm(new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - 1, 1))) };
+function monthEndInclusive(ym?: string|null) {
+  if (!ym) return null;
+  const [y,m] = ym.split('-').map(Number);
+  // último día del mes
+  return new Date(Date.UTC(y, m, 0, 23, 59, 59, 999));
 }
 
 @Controller('reports')
@@ -25,53 +33,82 @@ export class ReportsReceivablesSummaryController {
   constructor(private prisma: PrismaService) {}
 
   @Get('receivables.summary')
-  async summary(
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-    @Query('debug') debug?: string,
-  ) {
-    const { start, end } = monthRange(from ?? null, to ?? null);
+  async summary(@Query('from') from?: string, @Query('to') to?: string) {
+    const fromDt = monthStart(from || null);
+    const toDt   = monthEndInclusive(to || null);
 
-    const tried: any[] = [];
-    const candidates = [
-      { table: 'cmr."Receivable"', date: 'fecha',  due: 'vence',     amount: 'saldo', status: 'estado' },
-      { table: 'crm."Receivable"', date: 'fecha',  due: 'vence',     amount: 'saldo', status: 'estado' },
-      { table: 'public.receivables', date:'fecha', due: 'vence',     amount: 'saldo', status: 'estado' },
-    ];
+    // Armamos filtros por rango si los pasaron
+    const dateFilter = (col: string) => {
+      if (fromDt && toDt)   return `AND ${col} BETWEEN $1 AND $2`;
+      if (fromDt && !toDt)  return `AND ${col} >= $1`;
+      if (!fromDt && toDt)  return `AND ${col} <= $1`;
+      return '';
+    };
+    const argsFor = () => {
+      if (fromDt && toDt) return [fromDt, toDt];
+      if (fromDt && !toDt) return [fromDt];
+      if (!fromDt && toDt) return [toDt];
+      return [];
+    };
 
-    for (const c of candidates) {
-      const sql = `
-        SELECT
-          COALESCE(SUM(CASE WHEN ${c.status} IN ('Cobrado','PAID','paid') THEN ${c.amount} ELSE 0 END),0)::bigint AS paid,
-          COALESCE(SUM(CASE
-            WHEN ${c.status} IN ('Pendiente','pending','PENDING') AND ${c.due} >= NOW() THEN ${c.amount}
-            ELSE 0 END),0)::bigint AS pending,
-          COALESCE(SUM(CASE
-            WHEN (${c.status} IN ('Vencido','overdue','OVERDUE'))
-              OR (${c.status} IN ('Pendiente','pending','PENDING') AND ${c.due} < NOW())
-            THEN ${c.amount} ELSE 0 END),0)::bigint AS overdue
-        FROM ${c.table}
-        WHERE ${c.date} >= $1 AND ${c.date} < $2
-      `;
-      try {
-        const rows: any[] = await this.prisma.$queryRawUnsafe(sql, start, end);
-        const r = rows?.[0];
-        if (r) {
-          const out = {
-            range: { from, to },
-            paid: Number(r.paid) || 0,
-            pending: Number(r.pending) || 0,
-            overdue: Number(r.overdue) || 0,
-          };
-          return debug ? { ...out, _debug: { picked: c.table, tried } } : out;
+    // Probar candidatos hasta que uno devuelva filas
+    for (const cand of CANDIDATES) {
+      for (const dcol of cand.dateCols) {
+        for (const acol of cand.amountCols) {
+          // 1) Si hay status, sumamos por status
+          for (const scol of cand.statusCols) {
+            const sql = `
+              SELECT
+                COALESCE(SUM(CASE WHEN LOWER(${scol}) IN ('cobrado','paid','cobrada') THEN ${acol} ELSE 0 END),0)::bigint AS paid,
+                COALESCE(SUM(CASE WHEN LOWER(${scol}) IN ('pendiente','pending') THEN ${acol} ELSE 0 END),0)::bigint AS pending,
+                COALESCE(SUM(CASE WHEN LOWER(${scol}) IN ('vencido','overdue') THEN ${acol} ELSE 0 END),0)::bigint AS overdue
+              FROM ${cand.table}
+              WHERE ${dcol} IS NOT NULL
+              ${dateFilter(dcol)}
+            `;
+            try {
+              const rows = await this.prisma.$queryRawUnsafe<any[]>(sql, ...argsFor());
+              const r = rows?.[0];
+              if (r && (Number(r.paid)+Number(r.pending)+Number(r.overdue)) >= 0) {
+                return {
+                  range: { from: from || null, to: to || null },
+                  paid: Number(r.paid)||0,
+                  pending: Number(r.pending)||0,
+                  overdue: Number(r.overdue)||0,
+                  _picked: { table: cand.table, dateCol: dcol, amountCol: acol, statusCol: scol }
+                };
+              }
+            } catch { /* intentar siguiente combinación */ }
+          }
+
+          // 2) Sin status: inferir por vencimiento vs hoy (balance/importe > 0)
+          const sql2 = `
+            SELECT
+              COALESCE(SUM(CASE WHEN ${acol} <= 0 THEN ${acol} ELSE 0 END),0)::bigint AS paid_like,
+              COALESCE(SUM(CASE WHEN ${acol} > 0 AND ${dcol} >= CURRENT_DATE THEN ${acol} ELSE 0 END),0)::bigint AS pending_like,
+              COALESCE(SUM(CASE WHEN ${acol} > 0 AND ${dcol} <  CURRENT_DATE THEN ${acol} ELSE 0 END),0)::bigint AS overdue_like
+            FROM ${cand.table}
+            WHERE ${dcol} IS NOT NULL
+            ${dateFilter(dcol)}
+          `;
+          try {
+            const rows = await this.prisma.$queryRawUnsafe<any[]>(sql2, ...argsFor());
+            const r = rows?.[0];
+            if (r && (Number(r.pending_like)+Number(r.overdue_like) >= 0)) {
+              return {
+                range: { from: from || null, to: to || null },
+                paid: Math.abs(Number(r.paid_like)||0),      // si el saldo es 0/negativo lo consideramos cobrado
+                pending: Number(r.pending_like)||0,
+                overdue: Number(r.overdue_like)||0,
+                _picked: { table: cand.table, dateCol: dcol, amountCol: acol, statusCol: null }
+              };
+            }
+          } catch { /* siguiente */ }
         }
-        tried.push({ table: c.table, error: null });
-      } catch (e) {
-        tried.push({ table: c.table, error: 'query_failed' });
       }
     }
 
-    const out = { range: { from, to }, paid: 0, pending: 0, overdue: 0 };
-    return debug ? { ...out, _debug: { picked: null, tried } } : out;
+    // Fallback (sin datos)
+    return { range: { from: from || null, to: to || null }, paid: 0, pending: 0, overdue: 0, _picked: null };
   }
 }
