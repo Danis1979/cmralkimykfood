@@ -56,7 +56,7 @@ class AppController {
     ReceivablesModule,
     ReportsModule,
     SalesModule,
-  ],
+  , CompatModule],
   controllers: [AppController],
 })
 export class AppModule {}
