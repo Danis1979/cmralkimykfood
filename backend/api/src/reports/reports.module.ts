@@ -23,6 +23,10 @@ import { ReportsProductionsCsvController } from './reports.productions.csv.contr
 import { ReportsReceivablesSearchCsvController } from './reports.receivables.search.csv.controller';
 import { ReportsStockCsvController } from './reports.stock.csv.controller';
 
+// Extras (JSON)
+import { ReportsSalesMonthlyController } from './reports.sales.monthly.controller';
+import { ReportsReceivablesSummaryController } from './reports.receivables.summary.controller';
+
 @Module({
   controllers: [
     // JSON
@@ -45,6 +49,10 @@ import { ReportsStockCsvController } from './reports.stock.csv.controller';
     ReportsProductionsCsvController,
     ReportsReceivablesSearchCsvController,
     ReportsStockCsvController,
+
+    // Extra (JSON)
+    ReportsSalesMonthlyController,
+    ReportsReceivablesSummaryController,
   ],
   providers: [PrismaService],
 })

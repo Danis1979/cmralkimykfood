@@ -1,160 +1,204 @@
-import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Post, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
+import { ApiQuery, ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma.service';
 
-type OrderItemInput = { sku: string; qty: number; price?: number };
-
+@ApiTags('Orders')
 @Controller('orders')
 export class OrdersController {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
+
+  private aliases = {
+    date:   ['issuedAt','createdAt','date','fecha','created_at','emision','created'],
+    client: ['client','cliente','customer','clientName','nombre_cliente','cliente_nombre','nombre'],
+    total:  ['total','monto','importe','amount','monto_total','total_neto','total_bruto'],
+  };
+
+  private pickKey(row: any, candidates: string[]): string | null {
+    if (!row || typeof row !== 'object') return null;
+    for (const k of candidates) if (k in row) return k;
+    // también admite anidado: client.name
+    if (candidates.includes('client') && row.client && typeof row.client === 'object') {
+      if ('name' in row.client) return 'client.name';
+    }
+    return null;
+  }
+
+  private getVal(row: any, key: string | null): any {
+    if (!key) return null;
+    if (key.includes('.')) {
+      const [a,b] = key.split('.');
+      return row?.[a]?.[b] ?? null;
+    }
+    return row?.[key] ?? null;
+  }
+
+  private async chooseDelegate() {
+    const delegates = ['sale', 'resumen_historico']; // orden de preferencia
+    const tried: string[] = [];
+    for (const d of delegates) {
+      const model = (this.prisma as any)[d];
+      if (!model) { tried.push(`${d}:absent`); continue; }
+      try {
+        const sample = await model.findFirst({ take: 1 });
+        tried.push(`${d}:${sample ? 'ok' : 'empty'}`);
+        if (sample) return { delegate: d, sample, tried };
+      } catch (e: any) {
+        tried.push(`${d}:err`);
+      }
+    }
+    // si ninguno tiene filas, devolver el primero existente (para shape consistente)
+    for (const d of delegates) {
+      if ((this.prisma as any)[d]) return { delegate: d, sample: null, tried };
+    }
+    return { delegate: null as any, sample: null, tried };
+  }
+
+  private normalizeRow(row: any, meta: any) {
+    const id = row?.id ?? null;
+    const rawDate   = this.getVal(row, meta?.dateKey);
+    const rawClient = this.getVal(row, meta?.clientKey);
+    const rawTotal  = this.getVal(row, meta?.totalKey);
+
+    let date: string | null = null;
+    if (rawDate instanceof Date) date = rawDate.toISOString();
+    else if (typeof rawDate === 'string' && !Number.isNaN(Date.parse(rawDate))) {
+      date = new Date(rawDate).toISOString();
+    } else if (typeof rawDate === 'number') {
+      const d = new Date(rawDate);
+      if (!Number.isNaN(+d)) date = d.toISOString();
+    }
+
+    const client = (rawClient && typeof rawClient === 'string') ? rawClient
+                  : (typeof rawClient === 'object' && 'name' in rawClient ? rawClient.name : null);
+
+    const total = typeof rawTotal === 'number' ? rawTotal
+                : (rawTotal ? Number(rawTotal) : 0);
+
+    return { id, date, client, total, _raw: row };
+  }
+
+  private async listBase(qs: any) {
+    const limit = Math.max(1, Math.min(100, Number(qs.limit ?? 20)));
+    const page  = Math.max(1, Number(qs.page ?? 1));
+    const skip  = (page - 1) * limit;
+
+    const chosen = await this.chooseDelegate();
+    const delegate = chosen.delegate ? (this.prisma as any)[chosen.delegate] : null;
+
+    if (!delegate) {
+      return { total: 0, items: [], meta: null, debug: { tried: chosen.tried, delegate: null } };
+    }
+
+    // obtener una muestra confiable (si no vino de chooseDelegate)
+    let sample = chosen.sample;
+    if (!sample) {
+      try { sample = await delegate.findFirst({ take: 1 }); } catch {}
+    }
+
+    // detectar claves
+    let meta: { dateKey: string|null; clientKey: string|null; totalKey: string|null } | null = null;
+    if (sample) {
+      const dateKey   = this.pickKey(sample, this.aliases.date);
+      const clientKey = this.pickKey(sample, this.aliases.client);
+      const totalKey  = this.pickKey(sample, this.aliases.total);
+      meta = { dateKey, clientKey, totalKey };
+    }
+
+    // construir select seguro
+    const select: any = { id: true };
+    if (meta?.dateKey && !meta.dateKey.includes('.'))   select[meta.dateKey] = true;
+    if (meta?.clientKey && !meta.clientKey.includes('.')) select[meta.clientKey] = true;
+    if (meta?.totalKey && !meta.totalKey.includes('.')) select[meta.totalKey] = true;
+    // si clientKey es client.name, igual pedimos client { name }
+    if (meta?.clientKey === 'client.name') select['client'] = { select: { name: true } };
+
+    // ordenar: por fecha si hay, si no por id desc
+    const orderBy = meta?.dateKey && !meta.dateKey.includes('.') ? { [meta.dateKey]: 'desc' } : { id: 'desc' };
+
+    // ejecutar query
+    let total = 0;
+    try { total = await delegate.count(); } catch {}
+    let rows: any[] = [];
+    try {
+      rows = await delegate.findMany({ skip, take: limit, select, orderBy });
+    } catch (e: any) {
+      // última defensa: sin select/orden (puede traer muchos campos)
+      try { rows = await delegate.findMany({ skip, take: limit }); } catch { rows = []; }
+    }
+
+    const items = rows.map(r => this.normalizeRow(r, meta));
+    return { total, items, meta, debug: { tried: chosen.tried, delegate: chosen.delegate } };
+  }
 
   @Get()
-  async list(@Query('take') take = '50') {
-    const n = Math.min(parseInt(take, 10) || 50, 200);
-    const orders = await (this.prisma as any).order.findMany({
-      take: n,
-      orderBy: { createdAt: 'desc' },
-      include: { items: { include: { product: true } } },
-    });
+  @ApiQuery({ name: 'limit', required: false, example: 20 })
+  @ApiQuery({ name: 'page', required: false, example: 1 })
+  async list(@Query() qs: Record<string, any>) {
+    return this.listBase(qs);
+  }
+
+  @Get('search')
+  @ApiQuery({ name: 'limit', required: false, example: 20 })
+  @ApiQuery({ name: 'page', required: false, example: 1 })
+  @ApiQuery({ name: 'q', required: false, description: 'id numérico (opcional)' })
+  async search(@Query() qs: Record<string, any>) {
+    // si q es id exacto, devolvemos esa primero y completamos con el resto
+    const q = (qs.q ?? '').toString().trim();
+    if (/^\d+$/.test(q)) {
+      const x = await this.byId(q);
+      const rest = await this.listBase(qs);
+      const items = x ? [x, ...rest.items.filter(i => i.id !== x.id)] : rest.items;
+      return { ...rest, items };
+    }
+    return this.listBase(qs);
+  }
+
+  @Get('_debug')
+  async debug() {
+    const sale = (this.prisma as any).sale;
+    const rh   = (this.prisma as any).resumen_historico;
+    const chosen = await this.chooseDelegate();
+    let keys = null as any;
+    let sample = null as any;
+    if (chosen.delegate) {
+      try { sample = await (this.prisma as any)[chosen.delegate].findFirst({ take: 1 }); } catch {}
+      if (sample) {
+        keys = {
+          dateKey:   this.pickKey(sample, this.aliases.date),
+          clientKey: this.pickKey(sample, this.aliases.client),
+          totalKey:  this.pickKey(sample, this.aliases.total),
+        };
+      }
+    }
     return {
-      items: orders.map(o => ({
-        id: o.id,
-        status: o.status,
-        clientId: o.clientId,
-        items: o.items.map(i => ({ sku: i.product.sku, qty: i.qty, price: i.price })),
-        createdAt: o.createdAt,
-      })),
+      exists: { sale: !!sale, resumen_historico: !!rh },
+      tried: chosen.tried,
+      delegate: chosen.delegate,
+      keys,
+      sample,
     };
   }
 
   @Get(':id')
-  async get(@Param('id') id: string) {
-    const o = await (this.prisma as any).order.findUnique({
-      where: { id },
-      include: { items: { include: { product: true } } },
-    });
-    if (!o) throw new NotFoundException('Pedido no encontrado');
-    return {
-      id: o.id,
-      status: o.status,
-      clientId: o.clientId,
-      items: o.items.map(i => ({ sku: i.product.sku, qty: i.qty, price: i.price })),
-      createdAt: o.createdAt,
-      notes: o.notes,
-    };
-  }
+  async byId(@Param('id') id: string) {
+    const chosen = await this.chooseDelegate();
+    const model = chosen.delegate ? (this.prisma as any)[chosen.delegate] : null;
+    if (!model) return null;
 
-  // Crea BORRADOR. Acepta clientId o clientEmail.
-  @Post()
-  async create(@Body() body: { clientId?: string; clientEmail?: string; items: OrderItemInput[]; notes?: string }) {
-    if (!body?.items?.length) throw new BadRequestException('Faltan items');
-    const clientId = await this.resolveClientId(body.clientId, body.clientEmail);
-
-    // Resolver productos por SKU
-    const skus = [...new Set(body.items.map(i => i.sku))];
-    const products = await (this.prisma as any).product.findMany({ where: { sku: { in: skus } } });
-    if (products.length !== skus.length) {
-      const found = new Set(products.map(p => p.sku));
-      const missing = skus.filter(s => !found.has(s));
-      throw new BadRequestException(`SKU inexistente: ${missing.join(', ')}`);
+    const numId = /^\d+$/.test(id) ? Number(id) : id;
+    let row = null as any;
+    try { row = await model.findUnique({ where: { id: numId } }); } catch {}
+    if (!row && typeof numId === 'string') {
+      try { row = await model.findUnique({ where: { id } }); } catch {}
     }
-    const bySku = Object.fromEntries(products.map(p => [p.sku, p]));
+    if (!row) return null;
 
-    const order = await (this.prisma as any).order.create({
-      data: {
-        clientId,
-        status: 'BORRADOR',
-        notes: body.notes || null,
-        items: {
-          create: body.items.map(it => ({
-            productId: bySku[it.sku].id,
-            qty: it.qty,
-            price: it.price != null ? String(it.price) : null,
-          })),
-        },
-      },
-      include: { items: { include: { product: true } } },
-    });
-
-    return {
-      id: order.id,
-      status: order.status,
-      items: order.items.map(i => ({ sku: i.product.sku, qty: i.qty, price: i.price })),
+    // meta por fila
+    const meta = {
+      dateKey:   this.pickKey(row, this.aliases.date),
+      clientKey: this.pickKey(row, this.aliases.client),
+      totalKey:  this.pickKey(row, this.aliases.total),
     };
-  }
-
-  // CONFIRMADO → crea reservas si hay disponible suficiente
-  @Post(':id/confirm')
-  async confirm(@Param('id') id: string, @Body() body?: { ttlHours?: number }) {
-    const order = await (this.prisma as any).order.findUnique({
-      where: { id },
-      include: { items: true },
-    });
-    if (!order) throw new NotFoundException('Pedido no encontrado');
-    if (order.status !== 'BORRADOR') throw new BadRequestException(`Solo BORRADOR puede confirmarse (actual=${order.status})`);
-
-    const products = await (this.prisma as any).product.findMany({ where: { id: { in: order.items.map(i => i.productId) } } });
-    const ttlMs = ((body?.ttlHours ?? 72) | 0) * 60 * 60 * 1000;
-    const expiresAt = new Date(Date.now() + ttlMs);
-
-    // Validar disponible por item
-    for (const it of order.items) {
-      const onHand = await this.getOnHand(it.productId);
-      const reserved = await this.getReserved(it.productId);
-      const available = onHand - reserved;
-      if (available < it.qty) {
-        const sku = products.find(p => p.id === it.productId)?.sku || it.productId;
-        throw new BadRequestException(`Stock insuficiente para ${sku}. Disponible=${available}, pedido=${it.qty}`);
-      }
-    }
-
-    // Crear reservas y confirmar
-    await this.prisma.$transaction(async (tx) => {
-      for (const it of order.items) {
-        await (tx as any).stockReservation.create({
-          data: {
-            orderId: order.id,
-            productId: it.productId,
-            qty: it.qty,
-            status: 'ACTIVA',
-            expiresAt,
-          },
-        });
-      }
-      await (tx as any).order.update({ where: { id: order.id }, data: { status: 'CONFIRMADO' } });
-    });
-
-    // Resumen
-    const items = await Promise.all(order.items.map(async (it) => {
-      const p = products.find(x => x.id === it.productId)!;
-      const onHand = await this.getOnHand(it.productId);
-      const reserved = await this.getReserved(it.productId);
-      return { sku: p.sku, qty: it.qty, onHand, reserved, available: onHand - reserved };
-    }));
-    return { id: order.id, status: 'CONFIRMADO', items, expiresAt };
-  }
-
-  // Helpers
-  private async resolveClientId(clientId?: string, clientEmail?: string) {
-    if (clientId) return clientId;
-    if (!clientEmail) throw new BadRequestException('Proveé clientId o clientEmail');
-    const c = await (this.prisma as any).client.findFirst({ where: { email: clientEmail } });
-    if (!c) throw new BadRequestException('Cliente no encontrado (por email)');
-    return c.id;
-  }
-
-  private async getOnHand(productId: string) {
-    const [inAgg, outAgg] = await Promise.all([
-      (this.prisma as any).inventoryMove.aggregate({ where: { productId, direction: 'IN' }, _sum: { qty: true } }),
-      (this.prisma as any).inventoryMove.aggregate({ where: { productId, direction: 'OUT' }, _sum: { qty: true } }),
-    ]);
-    return (inAgg._sum.qty ?? 0) - (outAgg._sum.qty ?? 0);
-  }
-
-  private async getReserved(productId: string) {
-    const agg = await (this.prisma as any).stockReservation.aggregate({
-      where: { productId, status: 'ACTIVA' },
-      _sum: { qty: true },
-    });
-    return agg._sum.qty ?? 0;
+    return this.normalizeRow(row, meta);
   }
 }
