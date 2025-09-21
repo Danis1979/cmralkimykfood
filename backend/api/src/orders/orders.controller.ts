@@ -137,7 +137,7 @@ export class OrdersController {
     return this.listBase(qs);
   }
 
-  @Get('search')
+  @Get('compat/search')
   @ApiQuery({ name: 'limit', required: false, example: 20 })
   @ApiQuery({ name: 'page', required: false, example: 1 })
   @ApiQuery({ name: 'q', required: false, description: 'id numérico (opcional)' })
