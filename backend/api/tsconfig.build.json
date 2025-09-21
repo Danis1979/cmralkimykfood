@@ -6,8 +6,6 @@
     "declaration": false,
     "sourceMap": true
   },
-  "files": [
-    "src/main.ts",
-    "src/app.module.ts"
-  ]
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts", "**/*.e2e-spec.ts"]
 }
