@@ -16,15 +16,13 @@ import { ReceivablesModule } from './receivables/receivables.module';
 import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
 
-// ⬇️ Compat agrega /clients, /suppliers y /products/search
+// Compat (endpoints mínimos de maestros para el front)
 import { CompatModule } from './compat/compat.module';
 
 @Controller()
 class AppController {
   @Get('health')
-  health() {
-    return { status: 'ok' };
-  }
+  health() { return { status: 'ok' }; }
 
   @Get('version')
   version() {
@@ -47,10 +45,10 @@ class AppController {
     }),
     CacheModule.register({ isGlobal: true }),
 
-    // ⬇️ rutas de compatibilidad (maestros básicos)
+    // 👇 asegúrate que CompatModule esté incluido
     CompatModule,
 
-    // Resto de módulos de la app
+    // Resto de módulos
     ChequesModule,
     DeliveriesModule,
     InventoryModule,
