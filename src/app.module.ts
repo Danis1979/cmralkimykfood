@@ -1,3 +1,6 @@
+import { ClientsModule } from './clients/clients.module';
+import { SuppliersModule } from './suppliers/suppliers.module';
+import { ProductsCompatModule } from './products/products-compat.module';
 import { Module, Controller, Get } from @nestjs/common;
 import { CacheModule } from @nestjs/cache-manager;
 import { ServeStaticModule } from @nestjs/serve-static;

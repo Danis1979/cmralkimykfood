@@ -1,76 +1,87 @@
-import { Controller, Get, Query, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 
-type TableRef = { schema: string; table: string; nameCol: string|null; columns: string[] };
-
-async function detect(prisma: PrismaService): Promise<TableRef|null> {
-  const candidates = [
-    { schema: 'cmr', table: 'Product' },
-    { schema: 'public', table: 'products' },
-    { schema: 'public', table: 'Product' },
-  ];
-  for (const c of candidates) {
-    const rows = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT 1 FROM information_schema.tables WHERE table_schema=$1 AND table_name=$2 LIMIT 1`,
-      c.schema, c.table
-    );
-    if (rows.length) {
-      const cols = await prisma.$queryRawUnsafe<any[]>(
-        `SELECT column_name FROM information_schema.columns WHERE table_schema=$1 AND table_name=$2`,
-        c.schema, c.table
-      );
-      const names = cols.map(r => r.column_name);
-      const nameCol = names.includes('name') ? 'name' : (names.includes('nombre') ? 'nombre' : null);
-      return { schema: c.schema, table: c.table, nameCol, columns: names };
-    }
-  }
-  return null;
+function pickInt(v: any, def: number) {
+  const n = parseInt(String(v ?? ''), 10);
+  return Number.isFinite(n) && n > 0 ? n : def;
 }
 
 @Controller('products')
 export class ProductsCompatController {
   constructor(private readonly prisma: PrismaService) {}
 
-  @Get()
-  async list() {
-    const t = await detect(this.prisma);
-    if (!t) throw new BadRequestException('No hay tabla de productos');
-    return this.prisma.$queryRawUnsafe<any[]>(
-      `SELECT * FROM "${t.schema}"."${t.table}" ORDER BY id DESC LIMIT 500`
-    );
+  @Get('search')
+  async search(
+    @Query('q') q = '',
+    @Query('page') page = '1',
+    @Query('limit') limit = '20',
+  ) {
+    const p = pickInt(page, 1);
+    const l = Math.min(100, pickInt(limit, 20));
+    const off = (p - 1) * l;
+    const term = `%${(q || '').trim().replace(/\s+/g, '%')}%`;
+
+    // 1) cmr."Product"
+    try {
+      const rows = await this.prisma.$queryRawUnsafe<any[]>(
+        `
+        SELECT id,
+               COALESCE(name, nombre, '') AS name,
+               COALESCE(sku, '')         AS sku,
+               COALESCE(uom, 'un')       AS uom,
+               COALESCE(tipo, 'simple')  AS tipo,
+               COALESCE("costoStd", 0)   AS "costoStd",
+               COALESCE("precioLista",0) AS "precioLista",
+               COALESCE(activo, true)    AS activo
+        FROM cmr."Product"
+        WHERE ($1='%%' OR COALESCE(name,nombre,'') ILIKE $1 OR COALESCE(sku,'') ILIKE $1)
+        ORDER BY name ASC
+        LIMIT $2 OFFSET $3
+        `, term, l, off,
+      );
+      const total = Number((await this.prisma.$queryRawUnsafe<any[]>(
+        `
+        SELECT COUNT(*)::int AS c
+        FROM cmr."Product"
+        WHERE ($1='%%' OR COALESCE(name,nombre,'') ILIKE $1 OR COALESCE(sku,'') ILIKE $1)
+        `, term,
+      ))[0]?.c ?? 0);
+      return { total, items: rows };
+    } catch (_) {}
+
+    // 2) public.products
+    try {
+      const rows = await this.prisma.$queryRawUnsafe<any[]>(
+        `
+        SELECT id,
+               COALESCE(name,'') AS name,
+               COALESCE(sku,'')  AS sku,
+               COALESCE(uom,'un') AS uom,
+               'simple'::text     AS tipo,
+               COALESCE(cost,0)   AS "costoStd",
+               COALESCE(price,0)  AS "precioLista",
+               true               AS activo
+        FROM public.products
+        WHERE ($1='%%' OR name ILIKE $1 OR COALESCE(sku,'') ILIKE $1)
+        ORDER BY name ASC
+        LIMIT $2 OFFSET $3
+        `, term, l, off,
+      );
+      const total = Number((await this.prisma.$queryRawUnsafe<any[]>(
+        `
+        SELECT COUNT(*)::int AS c
+        FROM public.products
+        WHERE ($1='%%' OR name ILIKE $1 OR COALESCE(sku,'') ILIKE $1)
+        `, term,
+      ))[0]?.c ?? 0);
+      return { total, items: rows };
+    } catch (_) {}
+
+    return { total: 0, items: [] };
   }
 
-  @Get('search')
-  async search(@Query('page') page='1', @Query('limit') limit='20', @Query('q') q='', @Query('sort') sort?: string) {
-    const p = Math.max(1, parseInt(page,10)||1);
-    const l = Math.min(100, Math.max(1, parseInt(limit,10)||20));
-    const off = (p-1)*l;
-    const t = await detect(this.prisma);
-    if (!t) throw new BadRequestException('No hay tabla de productos');
-
-    const where: string[] = [];
-    const params: any[] = [];
-    let pi = 1;
-
-    if (q) {
-      if (t.nameCol) where.push(`("${t.nameCol}" ILIKE '%'||$${pi}||'%' OR CAST(id AS TEXT) ILIKE '%'||$${pi}||'%')`);
-      else where.push(`CAST(id AS TEXT) ILIKE '%'||$${pi}||'%'`);
-      params.push(q); pi++;
-    }
-
-    const ordKey = (sort && (sort.startsWith('-')? sort.slice(1): sort)) || (t.nameCol ?? 'id');
-    const ordDir = (sort && sort.startsWith('-')) ? 'DESC' : 'ASC';
-    const ord = t.columns.includes(ordKey) ? `"${ordKey}" ${ordDir}` : (t.nameCol ? `"${t.nameCol}" ASC` : 'id DESC');
-
-    const items = await this.prisma.$queryRawUnsafe<any[]>(
-      `SELECT * FROM "${t.schema}"."${t.table}" ${where.length? 'WHERE '+where.join(' AND '):''}
-       ORDER BY ${ord}
-       LIMIT $${pi} OFFSET $${pi+1}`,
-      ...params, l, off
-    );
-    const totalRows = await this.prisma.$queryRawUnsafe<any[]>(
-      `SELECT COUNT(*)::int AS c FROM "${t.schema}"."${t.table}" ${where.length? 'WHERE '+where.join(' AND '):''}`, ...params
-    );
-    return { total: totalRows[0]?.c ?? items.length, page: p, items };
+  @Get()
+  async list(@Query('limit') limit = '100') {
+    return this.search('', '1', limit);
   }
 }
