@@ -4,7 +4,7 @@ import { OrdersController } from './orders.controller';
 import { PrismaService } from '../prisma.service';
 
 @Module({
-  controllers: [OrdersController],
+  controllers: [ OrdersQueryController, ],
   providers: [PrismaService],
 })
 export class OrdersModule {}

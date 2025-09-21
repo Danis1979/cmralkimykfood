@@ -1,7 +1,5 @@
-type OrderStatus = string;
 import { BadRequestException, Controller, Get, Query } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
-import { OrderStatus } from '@prisma/client';
 
 @Controller('orders')
 export class OrdersQueryController {
@@ -19,17 +17,10 @@ export class OrdersQueryController {
     const _skip = Math.max(0, parseInt(String(skip), 10) || 0);
     const _take = Math.min(100, Math.max(1, parseInt(String(take), 10) || 20));
 
-    let statusFilter: any | undefined;
-    if (status) {
-      const up = status.toUpperCase() as OrderStatus;
-      if (!Object.values(OrderStatus).includes(up)) {
-        throw new BadRequestException(
-          `status inválido. Usá uno de: ${Object.values(OrderStatus).join(', ')}`
-        );
-      }
-      statusFilter = up;
-    }
+    // status como string (sin enum de Prisma)
+    const statusFilter = status?.toUpperCase().trim() || undefined;
 
+    // rango de fechas
     let createdAt: { gte?: Date; lte?: Date } | undefined;
     if (dateFrom || dateTo) {
       createdAt = {};
@@ -64,8 +55,8 @@ export class OrdersQueryController {
       (this.prisma as any).order.count({ where }),
     ]);
 
-    const out = items.map((o) => {
-      const subtotal = o.items.reduce((acc, it) => {
+    const out = items.map((o: any) => {
+      const subtotal = o.items.reduce((acc: number, it: any) => {
         const priceNum =
           typeof it.price === 'number'
             ? it.price
@@ -79,7 +70,7 @@ export class OrdersQueryController {
         client: o.client?.name ?? o.clientId,
         notes: o.notes ?? undefined,
         subtotal,
-        items: o.items.map((it) => ({
+        items: o.items.map((it: any) => ({
           sku: it.product?.sku,
           name: it.product?.name,
           qty: it.qty,
