@@ -104,7 +104,7 @@ export class OrdersQueryController {
         skip: _skip,
         take: _take,
         orderBy: { date: 'desc' },
-        select: { id: true, date: true, client: true, total: true, status: true },
+        select: { id: true, date: true, client: true, total: true },
       }),
       (this.prisma as any).sale.count({ where: whereSale }),
     ]);
